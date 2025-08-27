@@ -290,7 +290,7 @@ for contact in ["anode", "cathode"]:
                             node_model="contact_potential")
 devsim.interface_equation(device=device_name, interface="pn_junction", name="PotentialEquation",
                           interface_model="Potential_continuity", type="continuous")
-devsim.solve(type="dc", absolute_error=1.0, relative_error=1e-12, maximum_iterations=30)
+devsim.solve(type="dc", absolute_error=1.5, relative_error=1e-12, maximum_iterations=50)
 
 # --- Second Solve: Fully Coupled System ---
 print("    Step 2/2: Assembling continuity equations and solving the full system...")
