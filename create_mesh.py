@@ -27,8 +27,8 @@ GAP_SIZE = 0.1 # um
 # --- NEW: Smart Mesh Density ---
 # Use a fine mesh near the junction and a coarse mesh elsewhere.
 MESH_FINE = 0.05    # Finer mesh size for the active junction area
-MESH_CONTACT = 0.2  # A specific, medium mesh size for the contacts
-MESH_COARSE = 0.5   # Coarser mesh size for non-critical corners
+MESH_CONTACT = 0.15  # A specific, medium mesh size for the contacts
+MESH_COARSE = 0.3   # Coarser mesh size for non-critical corners
 
 # --- Output Directory and File ---
 OUTPUT_DIR = "output"
@@ -121,6 +121,11 @@ print("Assigned final physical groups.")
 
 # --- 5. Generate and Save Mesh ---
 gmsh.option.setNumber("Mesh.MshFileVersion", 2.2)
+
+gmsh.option.setNumber("Mesh.Algorithm", 6) # 6 = Frontal-Delaunay
+
+gmsh.option.setNumber("Mesh.Optimize", 1)
+
 gmsh.model.mesh.generate(2)
 print("2D smart mesh generated successfully.")
 

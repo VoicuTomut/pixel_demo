@@ -374,6 +374,45 @@ devsim.interface_equation(device=device_name, interface="pn_junction", name="Hol
                           interface_model="Holes_continuity", type="continuous")
 
 # Solve the complete, fully coupled system with more iterations
-devsim.solve(type="dc", absolute_error=1e10, relative_error=1e-10, maximum_iterations=500)
+# --- Final Solve using a Ramping Strategy ---
+print("\n--- Final Solve: Using a Ramping Strategy for Stability ---")
+print("The simulation is numerically stiff. Ramping carrier lifetimes to guide the solver.")
 
+# Get the final, desired lifetime you set at the top of the script
+try:
+    target_lifetime = devsim.get_parameter(name="taun")
+except devsim.error:
+    # Set a default if it's not already a parameter (it should be from your setup)
+    target_lifetime = 1e-7
+
+# A list of lifetime values to ramp through.
+# We start with a very short, numerically stable lifetime and end with the target value.
+ramp_lifetimes = [1e-13, 1e-11, 1e-9, target_lifetime]
+
+# Loop through the ramp values, using each solution as the guess for the next
+for i, life in enumerate(ramp_lifetimes):
+    print(f"Ramp Step {i+1}/{len(ramp_lifetimes)}: Solving with taun/taup = {life:.1e} s")
+
+    # Update the physics model parameters for this step
+    devsim.set_parameter(name="taun", value=life)
+    devsim.set_parameter(name="taup", value=life)
+
+    # For the final ramp step, use the original strict tolerance.
+    # For intermediate steps, a looser tolerance is fine and faster.
+    if life == target_lifetime:
+        print("Final step: applying strict tolerance.")
+        relative_tolerance = 1e-10
+    else:
+        relative_tolerance = 1e-6
+
+    try:
+        # Solve the system with the current lifetime value
+        devsim.solve(type="dc", absolute_error=1e10, relative_error=relative_tolerance, maximum_iterations=100)
+    except devsim.error as msg:
+        print(f"\nConvergence failed during ramping at lifetime {life:.1e}.")
+        print(f"Error: {msg}")
+        # Stop the script if an intermediate step fails
+        raise RuntimeError("Ramping failed to converge.")
+
+# The final print statement from your script
 print("\n✅ Step 3 complete: Full photodiode model is defined and solved for equilibrium.")
