@@ -292,19 +292,21 @@ for variable in ["Potential", "Electrons", "Holes"]:
     devsim.interface_model(device=device_name, interface="pn_junction", name=f"{variable}_continuity:{variable}@r1",
                            equation="-1.0")
 
-# --- Part D: Solve for Initial Equilibrium (Staged Method with Correct Initial Guess) ---
+
 # --- Part D: Solve for Initial Equilibrium (Staged Method with Correct Initial Guess) ---
 print("  3D: Solving for initial equilibrium state (two-step method)...")
 
 # --- Create a physically-based initial guess for ALL variables ---
 print("    Creating robust initial guess based on charge neutrality...")
 for region in ["p_region", "n_region"]:
-    # Set initial carriers based on doping (This is correct)
+    # Set initial carriers based on doping
     devsim.set_node_values(device=device_name, region=region, name="Electrons", init_from="IntrinsicElectrons")
     devsim.set_node_values(device=device_name, region=region, name="Holes", init_from="IntrinsicHoles")
 
     # CORRECTED: Set initial potential based on carrier concentrations using the Boltzmann relation.
-    # This correctly calculates potential in Volts: Potential = Vt * log(n/ni)
+    # This correctly calculates potential in Volts and creates a physically consistent starting point.
+    # 📚 Sze Ref: Based on Ch. 2, Sec. 2.2, Eqs. 10 & 11, p. 82, relating potential to carrier levels.
+    # FORMULA: ψ = Vt * log(n/ni)
     devsim.node_model(device=device_name, region=region, name="InitialPotential",
                       equation="ThermalVoltage * log(IntrinsicElectrons/IntrinsicCarrierDensity)")
     devsim.set_node_values(device=device_name, region=region, name="Potential", init_from="InitialPotential")
@@ -314,7 +316,8 @@ for region in ["p_region", "n_region"]:
 print("    Step 1/2: Assembling and solving for Potential only...")
 # In this step, we ONLY assemble the Potential equation and its boundary conditions.
 for region in ["p_region", "n_region"]:
-    # Poisson's Equation
+    # 📚 Sze Ref: Ch. 2, Eq. 1, p. 81.
+    # FORMULA: Poisson's Equation: ∇²ψ = -ρ/ε
     devsim.equation(device=device_name, region=region, name="PotentialEquation", variable_name="Potential",
                     node_model="SpaceCharge", edge_model="DField", variable_update="log_damp")
 for contact in ["anode", "cathode"]:
@@ -325,13 +328,15 @@ for contact in ["anode", "cathode"]:
 devsim.interface_equation(device=device_name, interface="pn_junction", name="PotentialEquation",
                           interface_model="Potential_continuity", type="continuous")
 
-# Solve only for Potential
-devsim.solve(type="dc", absolute_error=1.0, relative_error=1e-12, maximum_iterations=30)
+# Solve for Potential with a tight tolerance to get an accurate starting point
+devsim.solve(type="dc", absolute_error=1e-10, relative_error=1e-12, maximum_iterations=50)
 
 
 # --- Update carrier guess based on the newly solved potential ---
 print("    Updating carrier guess using Boltzmann statistics...")
 for region in ["p_region", "n_region"]:
+    # This step makes the carrier distribution consistent with the solved potential profile.
+    # FORMULAS: n ≈ ni*exp(ψ/Vt), p ≈ ni*exp(-ψ/Vt)
     devsim.node_model(device=device_name, region=region, name="UpdatedElectrons",
                       equation="IntrinsicCarrierDensity*exp(Potential/ThermalVoltage)")
     devsim.node_model(device=device_name, region=region, name="UpdatedHoles",
@@ -344,17 +349,21 @@ for region in ["p_region", "n_region"]:
 print("    Step 2/2: Assembling continuity equations and solving the full system...")
 # Now, we assemble the carrier continuity equations and their boundary conditions.
 for region in ["p_region", "n_region"]:
-    # Electron Continuity Equation
+    # 📚 Sze Ref: Ch. 2, Eq. 6, p. 81.
+    # FORMULA: Electron Continuity: (1/q)∇⋅Jn - (U-G) = 0
     devsim.equation(device=device_name, region=region, name="ElectronContinuityEquation", variable_name="Electrons",
-                    node_model="NetRecombination", edge_model="ElectronCurrent", variable_update="positive")
-    # Hole Continuity Equation
+                    node_model="NetRecombination", edge_model="ElectronCurrent", variable_update="log_damp") # Use log_damp for stability
+    # 📚 Sze Ref: Ch. 2, Eq. 7, p. 81.
+    # FORMULA: Hole Continuity: -(1/q)∇⋅Jp - (U-G) = 0
     devsim.equation(device=device_name, region=region, name="HoleContinuityEquation", variable_name="Holes",
-                    node_model="NetRecombination", edge_model="NegHoleCurrent", variable_update="positive")
+                    node_model="NetRecombination", edge_model="NegHoleCurrent", variable_update="log_damp") # Use log_damp for stability
 
 # Apply the independent boundary conditions for the carrier equations at the contacts
 for contact in ["anode", "cathode"]:
+    # Condition 1: Charge Neutrality (p - n + N_net = 0)
     devsim.contact_equation(device=device_name, contact=contact, name="ElectronContinuityEquation",
                             node_model="contact_charge_neutrality")
+    # Condition 2: Mass-Action Law (p*n = ni²)
     devsim.contact_equation(device=device_name, contact=contact, name="HoleContinuityEquation",
                             node_model="contact_equilibrium")
 
@@ -364,7 +373,7 @@ devsim.interface_equation(device=device_name, interface="pn_junction", name="Ele
 devsim.interface_equation(device=device_name, interface="pn_junction", name="HoleContinuityEquation",
                           interface_model="Holes_continuity", type="continuous")
 
-# Solve the complete, fully coupled system
-devsim.solve(type="dc", absolute_error=1e10, relative_error=1e-10, maximum_iterations=30)
+# Solve the complete, fully coupled system with more iterations
+devsim.solve(type="dc", absolute_error=1e10, relative_error=1e-10, maximum_iterations=500)
 
 print("\n✅ Step 3 complete: Full photodiode model is defined and solved for equilibrium.")
