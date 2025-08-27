@@ -185,10 +185,20 @@ for region in ["p_region", "n_region"]:
     devsim.edge_from_node_model(device=device_name, region=region, node_model="Electrons")
     devsim.edge_from_node_model(device=device_name, region=region, node_model="Holes")
 
+    # Explicitly average mobility onto the edge for stability.
+    # Using a node model (like ElectronMobility) directly in an edge model can cause asymmetry
+    # in the solver. A symmetric average is more robust and physically correct.
+    devsim.edge_from_node_model(device=device_name, region=region, node_model="ElectronMobility")
+    devsim.edge_from_node_model(device=device_name, region=region, node_model="HoleMobility")
+    devsim.edge_model(device=device_name, region=region, name="EdgeElectronMobility",
+                      equation="(ElectronMobility@n0 + ElectronMobility@n1) * 0.5")
+    devsim.edge_model(device=device_name, region=region, name="EdgeHoleMobility",
+                      equation="(HoleMobility@n0 + HoleMobility@n1) * 0.5")
+
     # PURPOSE: Models the electron current density (Jn) using the Scharfetter-Gummel formulation.
     # 📚 Sze Ref: Chapter 2, "p-n Junctions", Eq. 4, p. 81.
     # FORMULA: Jn = q*μn*n*E + q*Dn*∇n  (Drift + Diffusion)
-    electron_current_eq = "ElectronCharge * ElectronMobility * ThermalVoltage * EdgeInverseLength * (Electrons@n1 * Bernoulli_neg_vdiff - Electrons@n0 * Bernoulli_vdiff)"
+    electron_current_eq = "ElectronCharge * EdgeElectronMobility * ThermalVoltage * EdgeInverseLength * (Electrons@n1 * Bernoulli_neg_vdiff - Electrons@n0 * Bernoulli_vdiff)"
     devsim.edge_model(device=device_name, region=region, name="ElectronCurrent", equation=electron_current_eq)
     # Define all required derivatives for the solver using DEVSIM's symbolic differentiator.
     for v in ["Potential", "Electrons", "Holes"]:
@@ -199,7 +209,7 @@ for region in ["p_region", "n_region"]:
     # PURPOSE: Models the hole current density (Jp).
     # 📚 Sze Ref: Chapter 2, "p-n Junctions", Eq. 5, p. 81.
     # FORMULA: Jp = q*μp*p*E - q*Dp*∇p  (Drift + Diffusion)
-    hole_current_eq = "-ElectronCharge * HoleMobility * ThermalVoltage * EdgeInverseLength * (Holes@n1 * Bernoulli_vdiff - Holes@n0 * Bernoulli_neg_vdiff)"
+    hole_current_eq = "-ElectronCharge * EdgeHoleMobility * ThermalVoltage * EdgeInverseLength * (Holes@n1 * Bernoulli_vdiff - Holes@n0 * Bernoulli_neg_vdiff)"
     devsim.edge_model(device=device_name, region=region, name="HoleCurrent", equation=hole_current_eq)
     for v in ["Potential", "Electrons", "Holes"]:
         for n in ["n0", "n1"]:
@@ -262,6 +272,17 @@ for contact in ["anode", "cathode"]:
                               equation="Holes")
     devsim.contact_node_model(device=device_name, contact=contact, name="contact_equilibrium:Holes",
                               equation="Electrons")
+
+    #  Define a model for charge neutrality at the contact
+    # FORMULA: p - n + NetDoping = 0
+    devsim.contact_node_model(device=device_name, contact=contact, name="contact_charge_neutrality",
+                              equation="Holes - Electrons + NetDoping")
+    devsim.contact_node_model(device=device_name, contact=contact, name="contact_charge_neutrality:Electrons",
+                              equation="-1.0")
+    devsim.contact_node_model(device=device_name, contact=contact, name="contact_charge_neutrality:Holes",
+                              equation="1.0")
+
+
 # CONDITION: ψ, n, and p are continuous across the p-n junction
 for variable in ["Potential", "Electrons", "Holes"]:
     devsim.interface_model(device=device_name, interface="pn_junction", name=f"{variable}_continuity",
@@ -271,45 +292,79 @@ for variable in ["Potential", "Electrons", "Holes"]:
     devsim.interface_model(device=device_name, interface="pn_junction", name=f"{variable}_continuity:{variable}@r1",
                            equation="-1.0")
 
-# --- Part D: Solve for Initial Equilibrium (Staged Method) ---
+# --- Part D: Solve for Initial Equilibrium (Staged Method with Correct Initial Guess) ---
+# --- Part D: Solve for Initial Equilibrium (Staged Method with Correct Initial Guess) ---
 print("  3D: Solving for initial equilibrium state (two-step method)...")
+
+# --- Create a physically-based initial guess for ALL variables ---
+print("    Creating robust initial guess based on charge neutrality...")
 for region in ["p_region", "n_region"]:
+    # Set initial carriers based on doping (This is correct)
     devsim.set_node_values(device=device_name, region=region, name="Electrons", init_from="IntrinsicElectrons")
     devsim.set_node_values(device=device_name, region=region, name="Holes", init_from="IntrinsicHoles")
-    devsim.node_model(device=device_name, region=region, name="InitialPotential", equation="-NetDoping")
+
+    # CORRECTED: Set initial potential based on carrier concentrations using the Boltzmann relation.
+    # This correctly calculates potential in Volts: Potential = Vt * log(n/ni)
+    devsim.node_model(device=device_name, region=region, name="InitialPotential",
+                      equation="ThermalVoltage * log(IntrinsicElectrons/IntrinsicCarrierDensity)")
     devsim.set_node_values(device=device_name, region=region, name="Potential", init_from="InitialPotential")
+
 
 # --- First Solve: Potential Only ---
 print("    Step 1/2: Assembling and solving for Potential only...")
+# In this step, we ONLY assemble the Potential equation and its boundary conditions.
 for region in ["p_region", "n_region"]:
-    # FORMULA (Sze, Ch. 2, Eq. 1, p. 81): Poisson's Equation: ∇⋅D - ρ = 0
+    # Poisson's Equation
     devsim.equation(device=device_name, region=region, name="PotentialEquation", variable_name="Potential",
                     node_model="SpaceCharge", edge_model="DField", variable_update="log_damp")
 for contact in ["anode", "cathode"]:
+    # Boundary condition for Potential at contacts
     devsim.contact_equation(device=device_name, contact=contact, name="PotentialEquation",
                             node_model="contact_potential")
+# Continuity condition for Potential at the interface
 devsim.interface_equation(device=device_name, interface="pn_junction", name="PotentialEquation",
                           interface_model="Potential_continuity", type="continuous")
-devsim.solve(type="dc", absolute_error=1.5, relative_error=1e-12, maximum_iterations=50)
+
+# Solve only for Potential
+devsim.solve(type="dc", absolute_error=1.0, relative_error=1e-12, maximum_iterations=30)
+
+
+# --- Update carrier guess based on the newly solved potential ---
+print("    Updating carrier guess using Boltzmann statistics...")
+for region in ["p_region", "n_region"]:
+    devsim.node_model(device=device_name, region=region, name="UpdatedElectrons",
+                      equation="IntrinsicCarrierDensity*exp(Potential/ThermalVoltage)")
+    devsim.node_model(device=device_name, region=region, name="UpdatedHoles",
+                      equation="IntrinsicCarrierDensity*exp(-Potential/ThermalVoltage)")
+    devsim.set_node_values(device=device_name, region=region, name="Electrons", init_from="UpdatedElectrons")
+    devsim.set_node_values(device=device_name, region=region, name="Holes", init_from="UpdatedHoles")
+
 
 # --- Second Solve: Fully Coupled System ---
 print("    Step 2/2: Assembling continuity equations and solving the full system...")
+# Now, we assemble the carrier continuity equations and their boundary conditions.
 for region in ["p_region", "n_region"]:
-    # FORMULA (Sze, Ch. 2, Eq. 6, p. 81): Electron Continuity: (1/q)∇⋅Jn - (U-G) = 0
+    # Electron Continuity Equation
     devsim.equation(device=device_name, region=region, name="ElectronContinuityEquation", variable_name="Electrons",
                     node_model="NetRecombination", edge_model="ElectronCurrent", variable_update="positive")
-    # FORMULA (Sze, Ch. 2, Eq. 7, p. 81): Hole Continuity: -(1/q)∇⋅Jp - (U-G) = 0
+    # Hole Continuity Equation
     devsim.equation(device=device_name, region=region, name="HoleContinuityEquation", variable_name="Holes",
                     node_model="NetRecombination", edge_model="NegHoleCurrent", variable_update="positive")
+
+# Apply the independent boundary conditions for the carrier equations at the contacts
 for contact in ["anode", "cathode"]:
     devsim.contact_equation(device=device_name, contact=contact, name="ElectronContinuityEquation",
-                            node_model="contact_equilibrium")
+                            node_model="contact_charge_neutrality")
     devsim.contact_equation(device=device_name, contact=contact, name="HoleContinuityEquation",
                             node_model="contact_equilibrium")
+
+# Continuity conditions for carriers at the interface
 devsim.interface_equation(device=device_name, interface="pn_junction", name="ElectronContinuityEquation",
                           interface_model="Electrons_continuity", type="continuous")
 devsim.interface_equation(device=device_name, interface="pn_junction", name="HoleContinuityEquation",
                           interface_model="Holes_continuity", type="continuous")
+
+# Solve the complete, fully coupled system
 devsim.solve(type="dc", absolute_error=1e10, relative_error=1e-10, maximum_iterations=30)
 
 print("\n✅ Step 3 complete: Full photodiode model is defined and solved for equilibrium.")
