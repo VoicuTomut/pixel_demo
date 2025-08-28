@@ -360,12 +360,21 @@ for region in ["p_region", "n_region"]:
 
 # Apply the independent boundary conditions for the carrier equations at the contacts
 for contact in ["anode", "cathode"]:
-    # Condition 1: Charge Neutrality (p - n + N_net = 0)
-    devsim.contact_equation(device=device_name, contact=contact, name="ElectronContinuityEquation",
-                            node_model="contact_charge_neutrality")
-    # Condition 2: Mass-Action Law (p*n = ni²)
-    devsim.contact_equation(device=device_name, contact=contact, name="HoleContinuityEquation",
-                            node_model="contact_equilibrium")
+    # Create contact-specific lifetimes that are extremely short to enforce equilibrium
+    devsim.contact_node_model(device=device_name, contact=contact, name="Contact_taun", equation="1e-20")
+    devsim.contact_node_model(device=device_name, contact=contact, name="Contact_taup", equation="1e-20")
+
+    # Re-define the SRH equation at the contact using these new, tiny lifetimes.
+    # This forces the (p*n - ni^2) term to zero for the solver to converge.
+    contact_srh_eq = "(Electrons*Holes - n_i_squared) / (Contact_taup*(Electrons + IntrinsicElectrons) + Contact_taun*(Holes + IntrinsicHoles))"
+    devsim.contact_node_model(device=device_name, contact=contact, name="ContactUSRH", equation=contact_srh_eq)
+
+    # Define the necessary derivatives for the solver using the symbolic differentiator
+    devsim.contact_node_model(device=device_name, contact=contact, name="ContactUSRH:Electrons",
+                              equation=f"diff({contact_srh_eq}, Electrons)")
+    devsim.contact_node_model(device=device_name, contact=contact, name="ContactUSRH:Holes",
+                              equation=f"diff({contact_srh_eq}, Holes)")
+
 
 # Continuity conditions for carriers at the interface
 devsim.interface_equation(device=device_name, interface="pn_junction", name="ElectronContinuityEquation",
@@ -404,7 +413,7 @@ for i, life in enumerate(ramp_lifetimes):
         print("Final step: applying strict tolerance.")
         relative_tolerance = 1e-10
     else:
-        relative_tolerance = 1e-6
+        relative_tolerance = 1e-9
 
     try:
         # Solve the system with the current lifetime value
