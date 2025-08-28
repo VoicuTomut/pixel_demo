@@ -319,7 +319,7 @@ for region in ["p_region", "n_region"]:
     # 📚 Sze Ref: Ch. 2, Eq. 1, p. 81.
     # FORMULA: Poisson's Equation: ∇²ψ = -ρ/ε
     devsim.equation(device=device_name, region=region, name="PotentialEquation", variable_name="Potential",
-                    node_model="SpaceCharge", edge_model="DField", variable_update="log_damp")
+                     edge_model="DField", variable_update="log_damp")
 for contact in ["anode", "cathode"]:
     # Boundary condition for Potential at contacts
     devsim.contact_equation(device=device_name, contact=contact, name="PotentialEquation",
