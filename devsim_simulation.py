@@ -295,32 +295,97 @@ def run_iv_sweep(device, voltages, p_flux):
     return np.array(currents)
 
 
-def calculate_qe(dark_currents, light_currents, p_flux, area_cm2, wavelength_nm):
-    q, h, c = 1.602e-19, 6.626e-34, 3.0e8
-    E_photon_J = (h * c) / (wavelength_nm * 1e-9)
-    photocurrent = np.abs(light_currents - dark_currents)
-    electrons_per_sec = photocurrent / q
-    photons_per_sec = p_flux * area_cm2
-    return (electrons_per_sec / photons_per_sec) * 100.0
+def calculate_qe(dark_currents, light_currents, p_flux, device_width_cm, wavelength_nm):
+    """
+    Calculates the External Quantum Efficiency (QE) for the photodiode.
+
+    Args:
+        dark_currents (np.array): Dark current density in A/cm.
+        light_currents (np.array): Light current density in A/cm.
+        p_flux (float): Incident photon flux in photons/cm²/s.
+        device_width_cm (float): The width of the device's top surface in cm.
+        wavelength_nm (float): The wavelength of the incident light in nm (for context, not used in calculation).
+
+    Returns:
+        np.array: The calculated QE as a percentage (%).
+    """
+    # Physical constants
+    q = 1.602e-19  # Elementary charge in Coulombs
+
+    # 1. Calculate the photocurrent density by subtracting the dark current
+    photocurrent_density = np.abs(light_currents - dark_currents)  # Result is in A/cm
+
+    # 2. Convert photocurrent density to the rate of electrons collected per cm of width
+    electrons_per_sec_per_cm = photocurrent_density / q  # Result is in (electrons/s)/cm
+
+    # 3. Calculate the rate of photons incident on the top surface per cm of width
+    photons_per_sec_per_cm = p_flux * device_width_cm  # (photons/cm²/s) * cm = (photons/s)/cm
+
+    # 4. Calculate QE. The per-cm units cancel out.
+    qe = (electrons_per_sec_per_cm / photons_per_sec_per_cm) * 100.0
+
+    return qe
 
 
 def run_cv_sweep(device, voltages, freq_hz):
+    """
+    Runs a Capacitance-Voltage (C-V) sweep on the device.
+
+    Args:
+        device (str): The name of the device to simulate.
+        voltages (np.array): An array of DC bias voltages for the sweep.
+        freq_hz (float): The frequency for the AC small-signal analysis.
+
+    Returns:
+        np.array: The calculated capacitances in F/cm.
+    """
+    # IMPROVEMENT: Use a variable for AC amplitude for clarity and easy modification.
+    # Increased from 0.001V to 0.01V for a better signal-to-noise ratio.
+    AC_AMPLITUDE = 0.01
+
+    # --- Circuit Setup ---
+    # The circuit is defined once at the beginning of the function.
+    # Note: For simplicity, this assumes no other circuit exists.
     devsim.add_circuit_node(name="cathode_node", variable_name="Potential", contact="cathode", region="n_region")
-    devsim.add_circuit_node(name="gnd", location=(0, 0, 0), variable_name="gnd")
-    devsim.circuit_element(name="V_AC_source", n1="cathode_node", n2="gnd", acreal=0.001)
+    devsim.add_circuit_node(name="gnd", variable_name="gnd") # location is optional for gnd
+    devsim.circuit_element(name="V_AC_source", n1="cathode_node", n2="gnd", acreal=AC_AMPLITUDE)
+
     capacitances = []
     for v in voltages:
+        # Set the DC bias for the current step
         devsim.set_parameter(device=device, name="anode_bias", value=v)
 
-        devsim.solve(type="dc", absolute_error=1e10, relative_error=1e-12, maximum_iterations=100)
-        devsim.solve(type="ac", frequency=freq_hz)
-        i_ac_imag = devsim.get_circuit_solution(name="V_AC_source.I", solution="ac_imag")
-        C = -i_ac_imag / ((2 * np.pi * freq_hz) * 0.001)
-        capacitances.append(C)
+        # FIX: Use a try-except block for robust error handling.
+        # This solves the logic error, defines 'msg', and prevents duplicate entries.
+        try:
+            # --- DC Solve ---
+            # IMPROVEMENT: Tightened absolute_error for better accuracy.
+            devsim.solve(type="dc", absolute_error=1.0, relative_error=1e-12, maximum_iterations=100)
 
-        print(f"CV Convergence failed at V = {v:.2f} V. Error: {msg}")
-        capacitances.append(float('nan'))
+            # --- AC Solve ---
+            devsim.solve(type="ac", frequency=freq_hz)
+
+            # --- Capacitance Calculation ---
+            # Note: V_AC_source.I refers to the current flowing through the AC source.
+            i_ac_imag = devsim.get_circuit_node_value(solution="ac_imag", node="V_AC_source.I")
+
+            # The capacitance formula must use the same AC_AMPLITUDE as the source.
+            C = -i_ac_imag / (2 * np.pi * freq_hz * AC_AMPLITUDE)
+            capacitances.append(C)
+
+            # IMPROVEMENT: Add progress feedback for successful steps.
+            print(f"✅ V = {v:.2f} V, Capacitance = {C * 1e12:.4e} pF/cm")
+
+        except devsim.error as msg:
+            # This block now only runs if a devsim.solve() call fails.
+            print(f"❌ CV Convergence failed at V = {v:.2f} V. Error: {msg}")
+            capacitances.append(float('nan'))
+
+    # --- Cleanup ---
+    # Reset the bias and delete the circuit to avoid conflicts with future simulations.
     devsim.set_parameter(device=device, name="anode_bias", value=0.0)
+    devsim.delete_circuit()
+
     return np.array(capacitances)
 
 
@@ -348,43 +413,43 @@ if __name__ == "__main__":
     light_currents = run_iv_sweep(device_name, iv_voltages, p_flux=LIGHT_PHOTON_FLUX)
     print("  4B Done !!")
 
-    #
-    # # --- Step 5: Post-Process for Quantum Efficiency (Task 4) ---
-    # print("\n--- STEP 5: Calculating Quantum Efficiency ---")
-    # DEVICE_WIDTH_CM = 50e-4
-    # WAVELENGTH_NM = 650
-    # qe_values = calculate_qe(dark_currents, light_currents, LIGHT_PHOTON_FLUX, DEVICE_WIDTH_CM, WAVELENGTH_NM)
-    #
-    # # --- Step 6: Run C-V Simulation (Task 3) ---
-    # print("\n--- STEP 6: Running C-V Simulation ---")
-    # cv_voltages = np.linspace(0, -5, 21)
-    # capacitances = run_cv_sweep(device_name, cv_voltages, freq_hz=1e6)
-    #
-    # # --- Step 7: Visualize All Results ---
-    # print("\n--- STEP 7: Generating Plots ---")
-    # plt.style.use('seaborn-v0_8-whitegrid')
-    #
-    # # Plot 1: I-V Curves
-    # plt.figure(1, figsize=(10, 6))
-    # plt.semilogy(iv_voltages, np.abs(dark_currents), 'r-o', label='Dark Current')
-    # plt.semilogy(iv_voltages, np.abs(light_currents), 'b-s', label='Photocurrent')
-    # plt.xlabel("Anode Voltage (V)"), plt.ylabel("Current Magnitude (A/cm)"), plt.title("I-V Characteristics")
-    # plt.legend(), plt.grid(True, which="both", ls="--"), plt.show()
-    #
-    # # Plot 2: Quantum Efficiency
-    # plt.figure(2, figsize=(10, 6))
-    # plt.plot(iv_voltages, qe_values, 'g-^', label='QE')
-    # plt.xlabel("Anode Voltage (V)"), plt.ylabel("External Quantum Efficiency (%)"), plt.title(
-    #     f"QE @ {WAVELENGTH_NM} nm")
-    # plt.legend(), plt.grid(True), plt.ylim(bottom=0), plt.show()
-    #
-    # # Plot 3: C-V and Mott-Schottky
-    # fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(16, 6))
-    # valid_cv_indices = ~np.isnan(capacitances)
-    # ax1.plot(cv_voltages[valid_cv_indices], capacitances[valid_cv_indices] * 1e12, 'm-d')
-    # ax1.set_xlabel("Anode Voltage (V)"), ax1.set_ylabel("Capacitance (pF/cm)"), ax1.set_title("C-V @ 1 MHz")
-    # ax1.grid(True)
-    # inv_C_squared = 1.0 / (capacitances ** 2)
-    # ax2.plot(cv_voltages[valid_cv_indices], inv_C_squared[valid_cv_indices], 'c-p')
-    # ax2.set_xlabel("Anode Voltage (V)"), ax2.set_ylabel("1/C² (F⁻²cm²)"), ax2.set_title("Mott-Schottky Plot")
-    # ax2.grid(True), plt.tight_layout(), plt.show()
+
+    # --- Step 5: Post-Process for Quantum Efficiency (Task 4) ---
+    print("\n--- STEP 5: Calculating Quantum Efficiency ---")
+    DEVICE_WIDTH_CM = 50e-4
+    WAVELENGTH_NM = 650
+    qe_values = calculate_qe(dark_currents, light_currents, LIGHT_PHOTON_FLUX, DEVICE_WIDTH_CM, WAVELENGTH_NM)
+
+    # --- Step 6: Run C-V Simulation (Task 3) ---
+    print("\n--- STEP 6: Running C-V Simulation ---")
+    cv_voltages = np.linspace(0, -5, 21)
+    capacitances = run_cv_sweep(device_name, cv_voltages, freq_hz=1e6)
+
+    # --- Step 7: Visualize All Results ---
+    print("\n--- STEP 7: Generating Plots ---")
+    plt.style.use('seaborn-v0_8-whitegrid')
+
+    # Plot 1: I-V Curves
+    plt.figure(1, figsize=(10, 6))
+    plt.semilogy(iv_voltages, np.abs(dark_currents), 'r-o', label='Dark Current')
+    plt.semilogy(iv_voltages, np.abs(light_currents), 'b-s', label='Photocurrent')
+    plt.xlabel("Anode Voltage (V)"), plt.ylabel("Current Magnitude (A/cm)"), plt.title("I-V Characteristics")
+    plt.legend(), plt.grid(True, which="both", ls="--"), plt.show()
+
+    # Plot 2: Quantum Efficiency
+    plt.figure(2, figsize=(10, 6))
+    plt.plot(iv_voltages, qe_values, 'g-^', label='QE')
+    plt.xlabel("Anode Voltage (V)"), plt.ylabel("External Quantum Efficiency (%)"), plt.title(
+        f"QE @ {WAVELENGTH_NM} nm")
+    plt.legend(), plt.grid(True), plt.ylim(bottom=0), plt.show()
+
+    # Plot 3: C-V and Mott-Schottky
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(16, 6))
+    valid_cv_indices = ~np.isnan(capacitances)
+    ax1.plot(cv_voltages[valid_cv_indices], capacitances[valid_cv_indices] * 1e12, 'm-d')
+    ax1.set_xlabel("Anode Voltage (V)"), ax1.set_ylabel("Capacitance (pF/cm)"), ax1.set_title("C-V @ 1 MHz")
+    ax1.grid(True)
+    inv_C_squared = 1.0 / (capacitances ** 2)
+    ax2.plot(cv_voltages[valid_cv_indices], inv_C_squared[valid_cv_indices], 'c-p')
+    ax2.set_xlabel("Anode Voltage (V)"), ax2.set_ylabel("1/C² (F⁻²cm²)"), ax2.set_title("Mott-Schottky Plot")
+    ax2.grid(True), plt.tight_layout(), plt.show()
