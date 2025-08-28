@@ -234,8 +234,19 @@ devsim.interface_equation(device=device_name, interface="pn_junction", name="Hol
                           interface_model="Holes_continuity", type="continuous")
 
 for contact in ["anode", "cathode"]:
-    devsim.contact_equation(device=device_name, contact=contact, name="ElectronContinuityEquation", node_model="contact_electrons")
-    devsim.contact_equation(device=device_name, contact=contact, name="HoleContinuityEquation", node_model="contact_holes")
+    # Set the boundary condition for Potential (Dirichlet)
+    devsim.contact_equation(device=device_name, contact=contact, name="PotentialEquation",
+                            node_model="contact_potential")
+
+    # Set the Electron boundary condition AND define the flux for current measurement
+    devsim.contact_equation(device=device_name, contact=contact, name="ElectronContinuityEquation",
+                            node_model="contact_electrons",
+                            edge_current_model="ElectronCurrent")
+
+    # Set the Hole boundary condition AND define the flux for current measurement
+    devsim.contact_equation(device=device_name, contact=contact, name="HoleContinuityEquation",
+                            node_model="contact_holes",
+                            edge_current_model="HoleCurrent")
 
 
 print("\n--- Final Solve: Using a Ramping Strategy for Stability ---")
@@ -265,7 +276,7 @@ def run_iv_sweep(device, voltages, p_flux):
         devsim.set_parameter(device=device, name="anode_bias", value=v)
         try:
             # Add maximum_divergence and increase maximum_iterations
-            devsim.solve(type="dc", absolute_error=1e10, relative_error=1e-12,
+            devsim.solve(type="dc", absolute_error=1e10, relative_error=1e-9,
                          maximum_iterations=400,  # Increased from 300
                          maximum_divergence=10)  # New parameter
             e_current = devsim.get_contact_current(device=device, contact="anode",
@@ -325,15 +336,18 @@ if __name__ == "__main__":
     medium_steps = np.linspace(-0.6, -2.0, 15)  # 14 steps of -0.1 V
     large_steps = np.linspace(-2.2, -4.0, 12)  # 11 steps of -0.2 V and one -0.3V
     iv_voltages = np.unique(np.concatenate([initial_small_steps, medium_steps, large_steps]))
+    iv_voltages = iv_voltages[::-1]
+    print("iv_voltages:",iv_voltages)
 
     LIGHT_PHOTON_FLUX = 1e17
     print("  4A: Running Dark Current Simulation (Task 1)")
     dark_currents = run_iv_sweep(device_name, iv_voltages, p_flux=0.0)
     print("  4A Done !!")
 
-    # print("  4B: Running Photocurrent Simulation (Task 2)")
-    # light_currents = run_iv_sweep(device_name, iv_voltages, p_flux=LIGHT_PHOTON_FLUX)
-    # print("  4B Done !!")
+    print("  4B: Running Photocurrent Simulation (Task 2)")
+    light_currents = run_iv_sweep(device_name, iv_voltages, p_flux=LIGHT_PHOTON_FLUX)
+    print("  4B Done !!")
+
     #
     # # --- Step 5: Post-Process for Quantum Efficiency (Task 4) ---
     # print("\n--- STEP 5: Calculating Quantum Efficiency ---")
