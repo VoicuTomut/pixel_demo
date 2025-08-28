@@ -259,6 +259,10 @@ for i, life in enumerate(ramp_lifetimes):
     relative_tolerance = 1e-9 if life != target_lifetime else 1e-9
     devsim.solve(type="dc", absolute_error=5.0, relative_error=relative_tolerance, maximum_iterations=200)
 
+# This final high-precision solve "polishes" the result from the ramp
+print("\n--- Final Polish: Calculating robust equilibrium state with high precision ---")
+devsim.solve(type="dc", absolute_error=1.0, relative_error=1e-12, maximum_iterations=100)
+
 print("\n✅ Step 3 complete: Full photodiode model is defined and solved for equilibrium.")
 
 
@@ -328,47 +332,39 @@ def calculate_qe(dark_currents, light_currents, p_flux, device_width_cm, wavelen
 
 def run_cv_sweep(device, voltages, freq_hz):
     """
-    Alternative approach: Use small-signal perturbation method
-    This avoids AC solve complexity by using numerical differentiation
+    Calculates C-V using an improved numerical differentiation scheme (central difference).
     """
     capacitances = []
-    DELTA_V = 0.001  # Small voltage perturbation for numerical differentiation
+    DELTA_V = 0.001  # Small voltage perturbation
 
-    print(f"\nStarting C-V sweep using perturbation method at {freq_hz / 1e6:.1f} MHz...")
+    print(f"\nStarting C-V sweep using central difference method...")
 
     for i, v in enumerate(voltages):
         print(f"Step {i + 1}/{len(voltages)}: Bias = {v:.2f} V")
 
         try:
-            # Solve at V
-            devsim.set_parameter(device=device, name="anode_bias", value=v)
-            devsim.solve(type="dc", absolute_error=1e-10, relative_error=1e-12,
-                         maximum_iterations=50)
-            q1 = devsim.get_contact_charge(device=device, contact="anode",
-                                           equation="PotentialEquation")
+            # Solve at V - delta_V/2
+            devsim.set_parameter(device=device, name="anode_bias", value=v - DELTA_V / 2.0)
+            devsim.solve(type="dc", absolute_error=1.0, relative_error=1e-12, maximum_iterations=100)
+            q1 = devsim.get_contact_charge(device=device, contact="anode", equation="PotentialEquation")
 
-            # Solve at V + delta_V
-            devsim.set_parameter(device=device, name="anode_bias", value=v + DELTA_V)
-            devsim.solve(type="dc", absolute_error=1e-10, relative_error=1e-12,
-                         maximum_iterations=50)
-            q2 = devsim.get_contact_charge(device=device, contact="anode",
-                                           equation="PotentialEquation")
+            # Solve at V + delta_V/2
+            devsim.set_parameter(device=device, name="anode_bias", value=v + DELTA_V / 2.0)
+            devsim.solve(type="dc", absolute_error=1.0, relative_error=1e-12, maximum_iterations=100)
+            q2 = devsim.get_contact_charge(device=device, contact="anode", equation="PotentialEquation")
 
-            # Calculate capacitance: C = dQ/dV
+            # Calculate capacitance C = dQ/dV
             C = abs(q2 - q1) / DELTA_V
             capacitances.append(C)
 
             print(f"    C = {C * 1e12:.3f} pF/cm")
 
-            # Reset to original bias
-            devsim.set_parameter(device=device, name="anode_bias", value=v)
-            devsim.solve(type="dc", absolute_error=1e10, relative_error=1e-12,
-                         maximum_iterations=50)
-
         except devsim.error as msg:
             print(f"    Failed at V = {v:.2f} V: {msg}")
             capacitances.append(float('nan'))
 
+    # Reset bias at the end
+    devsim.set_parameter(device=device, name="anode_bias", value=0.0)
     return np.array(capacitances)
 
 
@@ -407,6 +403,7 @@ if __name__ == "__main__":
     # --- Step 6: Run C-V Simulation (Task 3) ---
     print("\n--- STEP 6: Running C-V Simulation ---")
     cv_voltages = np.linspace(0, -5, 21)
+
     capacitances = run_cv_sweep(device_name, cv_voltages, freq_hz=1e6)
 
     # --- Step 7: Visualize All Results ---
