@@ -174,15 +174,17 @@ for region in ["p_region", "n_region"]:
 print("  3C: Defining all boundary condition models...")
 for contact in ["anode", "cathode"]:
     devsim.set_parameter(device=device_name, name=f"{contact}_bias", value=0.0)
-    devsim.contact_node_model(device=device_name, contact=contact, name="contact_potential",
+    # Use f-strings to create unique names like "anode_potential_bc"
+    devsim.contact_node_model(device=device_name, contact=contact, name=f"{contact}_potential_bc",
                               equation=f"Potential - {contact}_bias")
-    devsim.contact_node_model(device=device_name, contact=contact, name="contact_potential:Potential", equation="1.0")
-    devsim.contact_node_model(device=device_name, contact=contact, name="contact_electrons",
+    devsim.contact_node_model(device=device_name, contact=contact, name=f"{contact}_potential_bc:Potential", equation="1.0")
+    devsim.contact_node_model(device=device_name, contact=contact, name=f"{contact}_electrons_bc",
                               equation="Electrons - IntrinsicElectrons")
-    devsim.contact_node_model(device=device_name, contact=contact, name="contact_electrons:Electrons", equation="1.0")
-    devsim.contact_node_model(device=device_name, contact=contact, name="contact_holes",
+    devsim.contact_node_model(device=device_name, contact=contact, name=f"{contact}_electrons_bc:Electrons", equation="1.0")
+    devsim.contact_node_model(device=device_name, contact=contact, name=f"{contact}_holes_bc",
                               equation="Holes - IntrinsicHoles")
-    devsim.contact_node_model(device=device_name, contact=contact, name="contact_holes:Holes", equation="1.0")
+    devsim.contact_node_model(device=device_name, contact=contact, name=f"{contact}_holes_bc:Holes", equation="1.0")
+
 
 for variable in ["Potential", "Electrons", "Holes"]:
     devsim.interface_model(device=device_name, interface="pn_junction", name=f"{variable}_continuity",
@@ -208,7 +210,8 @@ for region in ["p_region", "n_region"]:
                     edge_model="DField", variable_update="log_damp")
 for contact in ["anode", "cathode"]:
     devsim.contact_equation(device=device_name, contact=contact, name="PotentialEquation",
-                            node_model="contact_potential")
+                           node_model=f"{contact}_potential_bc")
+
 devsim.interface_equation(device=device_name, interface="pn_junction", name="PotentialEquation",
                           interface_model="Potential_continuity", type="continuous")
 devsim.solve(type="dc", absolute_error=1e-10, relative_error=1e-12, maximum_iterations=50)
@@ -234,19 +237,15 @@ devsim.interface_equation(device=device_name, interface="pn_junction", name="Hol
                           interface_model="Holes_continuity", type="continuous")
 
 for contact in ["anode", "cathode"]:
-    # Set the boundary condition for Potential (Dirichlet)
     devsim.contact_equation(device=device_name, contact=contact, name="PotentialEquation",
-                            node_model="contact_potential")
-
-    # Set the Electron boundary condition AND define the flux for current measurement
+                            node_model=f"{contact}_potential_bc")
     devsim.contact_equation(device=device_name, contact=contact, name="ElectronContinuityEquation",
-                            node_model="contact_electrons",
+                            node_model=f"{contact}_electrons_bc",
                             edge_current_model="ElectronCurrent")
-
-    # Set the Hole boundary condition AND define the flux for current measurement
     devsim.contact_equation(device=device_name, contact=contact, name="HoleContinuityEquation",
-                            node_model="contact_holes",
+                            node_model=f"{contact}_holes_bc",
                             edge_current_model="HoleCurrent")
+
 
 
 print("\n--- Final Solve: Using a Ramping Strategy for Stability ---")
@@ -329,63 +328,50 @@ def calculate_qe(dark_currents, light_currents, p_flux, device_width_cm, wavelen
 
 def run_cv_sweep(device, voltages, freq_hz):
     """
-    Runs a Capacitance-Voltage (C-V) sweep using a robust, fully circuit-based method.
+    Alternative approach: Use small-signal perturbation method
+    This avoids AC solve complexity by using numerical differentiation
     """
-    AC_AMPLITUDE = 0.01
-
-    # --- Step 1: Create a unified circuit for both DC and AC biasing ---
-    # This single source applies the sweeping DC voltage and the small AC signal.
-    devsim.add_circuit_node(name="anode_node")
-    devsim.add_circuit_node(name="gnd", value=0.0)
-    devsim.circuit_element(name="V_bias", n1="anode_node", n2="gnd",
-                           value=0.0, # Initial DC value, will be swept in the loop
-                           acreal=AC_AMPLITUDE)
-
-    # --- Step 2: Connect the device contacts to the circuit nodes ---
-    # The anode is connected to the voltage source.
-    devsim.contact_equation(device=device, contact="anode", name="PotentialEquation",
-                            node_model="contact_potential", circuit_node="anode_node")
-    devsim.contact_equation(device=device, contact="anode", name="ElectronContinuityEquation",
-                            node_model="contact_electrons", edge_current_model="ElectronCurrent")
-    devsim.contact_equation(device=device, contact="anode", name="HoleContinuityEquation",
-                            node_model="contact_holes", edge_current_model="HoleCurrent")
-
-    # FIX: The cathode is now explicitly connected to the circuit's ground reference.
-    devsim.contact_equation(device=device, contact="cathode", name="PotentialEquation",
-                            node_model="contact_potential", circuit_node="gnd")
-    devsim.contact_equation(device=device, contact="cathode", name="ElectronContinuityEquation",
-                            node_model="contact_electrons", edge_current_model="ElectronCurrent")
-    devsim.contact_equation(device=device, contact="cathode", name="HoleContinuityEquation",
-                            node_model="contact_holes", edge_current_model="HoleCurrent")
-
     capacitances = []
-    print("\nStarting C-V sweep...")
-    for v in voltages:
-        # FIX: Apply the DC bias by altering the circuit source, not using a parameter.
-        devsim.circuit_alter(name="V_bias", param="value", value=v)
+    DELTA_V = 0.001  # Small voltage perturbation for numerical differentiation
+
+    print(f"\nStarting C-V sweep using perturbation method at {freq_hz / 1e6:.1f} MHz...")
+
+    for i, v in enumerate(voltages):
+        print(f"Step {i + 1}/{len(voltages)}: Bias = {v:.2f} V")
 
         try:
-            # Solve for the DC operating point at this bias
-            devsim.solve(type="dc", absolute_error=1.0, relative_error=1e-12, maximum_iterations=100)
+            # Solve at V
+            devsim.set_parameter(device=device, name="anode_bias", value=v)
+            devsim.solve(type="dc", absolute_error=1e-10, relative_error=1e-12,
+                         maximum_iterations=50)
+            q1 = devsim.get_contact_charge(device=device, contact="anode",
+                                           equation="PotentialEquation")
 
-            # Solve for the small-signal AC response
-            devsim.solve(type="ac", frequency=freq_hz)
+            # Solve at V + delta_V
+            devsim.set_parameter(device=device, name="anode_bias", value=v + DELTA_V)
+            devsim.solve(type="dc", absolute_error=1e-10, relative_error=1e-12,
+                         maximum_iterations=50)
+            q2 = devsim.get_contact_charge(device=device, contact="anode",
+                                           equation="PotentialEquation")
 
-            # The measured current is now from the main bias source "V_bias"
-            i_ac_imag = devsim.get_circuit_node_value(solution="ac_imag", node="V_bias.I")
-            C = -i_ac_imag / (2 * np.pi * freq_hz * AC_AMPLITUDE)
+            # Calculate capacitance: C = dQ/dV
+            C = abs(q2 - q1) / DELTA_V
             capacitances.append(C)
-            print(f"✅ V = {v:.2f} V, Capacitance = {C * 1e12:.4e} pF/cm")
+
+            print(f"    C = {C * 1e12:.3f} pF/cm")
+
+            # Reset to original bias
+            devsim.set_parameter(device=device, name="anode_bias", value=v)
+            devsim.solve(type="dc", absolute_error=1e10, relative_error=1e-12,
+                         maximum_iterations=50)
 
         except devsim.error as msg:
-            print(f"❌ CV Convergence failed at V = {v:.2f} V. Error: {msg}")
+            print(f"    Failed at V = {v:.2f} V: {msg}")
             capacitances.append(float('nan'))
 
-    # --- Cleanup ---
-    # The circuit is deleted at the end to not interfere with other simulations.
-    devsim.delete_circuit()
-
     return np.array(capacitances)
+
+
 
 # ==============================================================================
 #                      MAIN SIMULATION AND VISUALIZATION
