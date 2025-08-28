@@ -387,11 +387,12 @@ except devsim.error:
 
 # A list of lifetime values to ramp through.
 # We start with a very short, numerically stable lifetime and end with the target value.
-ramp_lifetimes = [1e-13, 1e-11, 1e-9, target_lifetime]
+ramp_lifetimes = [1e-13, 1e-11, 1e-9, 1e-8, target_lifetime]
 
 # Loop through the ramp values, using each solution as the guess for the next
 for i, life in enumerate(ramp_lifetimes):
-    print(f"Ramp Step {i+1}/{len(ramp_lifetimes)}: Solving with taun/taup = {life:.1e} s")
+
+    print(f"!!Ramp Step {i+1}/{len(ramp_lifetimes)}: Solving with taun/taup = {life:.1e} s")
 
     # Update the physics model parameters for this step
     devsim.set_parameter(name="taun", value=life)
@@ -407,7 +408,7 @@ for i, life in enumerate(ramp_lifetimes):
 
     try:
         # Solve the system with the current lifetime value
-        devsim.solve(type="dc", absolute_error=1e10, relative_error=relative_tolerance, maximum_iterations=100)
+        devsim.solve(type="dc", absolute_error=1e10, relative_error=relative_tolerance, maximum_iterations=200)
     except devsim.error as msg:
         print(f"\nConvergence failed during ramping at lifetime {life:.1e}.")
         print(f"Error: {msg}")
