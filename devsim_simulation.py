@@ -329,96 +329,94 @@ def calculate_qe(dark_currents, light_currents, p_flux, device_width_cm, wavelen
 
 def run_cv_sweep(device, voltages, freq_hz):
     """
-    Runs a Capacitance-Voltage (C-V) sweep on the device.
-
-    Args:
-        device (str): The name of the device to simulate.
-        voltages (np.array): An array of DC bias voltages for the sweep.
-        freq_hz (float): The frequency for the AC small-signal analysis.
-
-    Returns:
-        np.array: The calculated capacitances in F/cm.
+    Runs a Capacitance-Voltage (C-V) sweep using a robust, fully circuit-based method.
     """
-    # IMPROVEMENT: Use a variable for AC amplitude for clarity and easy modification.
-    # Increased from 0.001V to 0.01V for a better signal-to-noise ratio.
     AC_AMPLITUDE = 0.01
 
-    # --- Circuit Setup ---
-    # The circuit is defined once at the beginning of the function.
-    # Note: For simplicity, this assumes no other circuit exists.
-    devsim.add_circuit_node(name="cathode_node", variable_name="Potential", contact="cathode", region="n_region")
-    devsim.add_circuit_node(name="gnd", variable_name="gnd") # location is optional for gnd
-    devsim.circuit_element(name="V_AC_source", n1="cathode_node", n2="gnd", acreal=AC_AMPLITUDE)
+    # --- Step 1: Create a unified circuit for both DC and AC biasing ---
+    # This single source applies the sweeping DC voltage and the small AC signal.
+    devsim.add_circuit_node(name="anode_node")
+    devsim.add_circuit_node(name="gnd", value=0.0)
+    devsim.circuit_element(name="V_bias", n1="anode_node", n2="gnd",
+                           value=0.0, # Initial DC value, will be swept in the loop
+                           acreal=AC_AMPLITUDE)
+
+    # --- Step 2: Connect the device contacts to the circuit nodes ---
+    # The anode is connected to the voltage source.
+    devsim.contact_equation(device=device, contact="anode", name="PotentialEquation",
+                            node_model="contact_potential", circuit_node="anode_node")
+    devsim.contact_equation(device=device, contact="anode", name="ElectronContinuityEquation",
+                            node_model="contact_electrons", edge_current_model="ElectronCurrent")
+    devsim.contact_equation(device=device, contact="anode", name="HoleContinuityEquation",
+                            node_model="contact_holes", edge_current_model="HoleCurrent")
+
+    # FIX: The cathode is now explicitly connected to the circuit's ground reference.
+    devsim.contact_equation(device=device, contact="cathode", name="PotentialEquation",
+                            node_model="contact_potential", circuit_node="gnd")
+    devsim.contact_equation(device=device, contact="cathode", name="ElectronContinuityEquation",
+                            node_model="contact_electrons", edge_current_model="ElectronCurrent")
+    devsim.contact_equation(device=device, contact="cathode", name="HoleContinuityEquation",
+                            node_model="contact_holes", edge_current_model="HoleCurrent")
 
     capacitances = []
+    print("\nStarting C-V sweep...")
     for v in voltages:
-        # Set the DC bias for the current step
-        devsim.set_parameter(device=device, name="anode_bias", value=v)
+        # FIX: Apply the DC bias by altering the circuit source, not using a parameter.
+        devsim.circuit_alter(name="V_bias", param="value", value=v)
 
-        # FIX: Use a try-except block for robust error handling.
-        # This solves the logic error, defines 'msg', and prevents duplicate entries.
         try:
-            # --- DC Solve ---
-            # IMPROVEMENT: Tightened absolute_error for better accuracy.
+            # Solve for the DC operating point at this bias
             devsim.solve(type="dc", absolute_error=1.0, relative_error=1e-12, maximum_iterations=100)
 
-            # --- AC Solve ---
+            # Solve for the small-signal AC response
             devsim.solve(type="ac", frequency=freq_hz)
 
-            # --- Capacitance Calculation ---
-            # Note: V_AC_source.I refers to the current flowing through the AC source.
-            i_ac_imag = devsim.get_circuit_node_value(solution="ac_imag", node="V_AC_source.I")
-
-            # The capacitance formula must use the same AC_AMPLITUDE as the source.
+            # The measured current is now from the main bias source "V_bias"
+            i_ac_imag = devsim.get_circuit_node_value(solution="ac_imag", node="V_bias.I")
             C = -i_ac_imag / (2 * np.pi * freq_hz * AC_AMPLITUDE)
             capacitances.append(C)
-
-            # IMPROVEMENT: Add progress feedback for successful steps.
             print(f"✅ V = {v:.2f} V, Capacitance = {C * 1e12:.4e} pF/cm")
 
         except devsim.error as msg:
-            # This block now only runs if a devsim.solve() call fails.
             print(f"❌ CV Convergence failed at V = {v:.2f} V. Error: {msg}")
             capacitances.append(float('nan'))
 
     # --- Cleanup ---
-    # Reset the bias and delete the circuit to avoid conflicts with future simulations.
-    devsim.set_parameter(device=device, name="anode_bias", value=0.0)
+    # The circuit is deleted at the end to not interfere with other simulations.
     devsim.delete_circuit()
 
     return np.array(capacitances)
-
 
 # ==============================================================================
 #                      MAIN SIMULATION AND VISUALIZATION
 # ==============================================================================
 if __name__ == "__main__":
-    # --- Step 4: Run I-V Sweeps (Tasks 1 & 2) ---
-    print("\n--- STEP 4: Running I-V Sweeps ---")
-
-    # Using adaptive voltage stepping for better convergence at high bias
-    initial_small_steps = np.linspace(0, -0.5, 26)  # 25 steps of -0.02 V
-    medium_steps = np.linspace(-0.6, -2.0, 15)  # 14 steps of -0.1 V
-    large_steps = np.linspace(-2.2, -4.0, 12)  # 11 steps of -0.2 V and one -0.3V
-    iv_voltages = np.unique(np.concatenate([initial_small_steps, medium_steps, large_steps]))
-    iv_voltages = iv_voltages[::-1]
-    print("iv_voltages:",iv_voltages)
-
-    LIGHT_PHOTON_FLUX = 1e17
-    print("  4A: Running Dark Current Simulation (Task 1)")
-    dark_currents = run_iv_sweep(device_name, iv_voltages, p_flux=0.0)
-    print("  4A Done !!")
-
-    print("  4B: Running Photocurrent Simulation (Task 2)")
-    light_currents = run_iv_sweep(device_name, iv_voltages, p_flux=LIGHT_PHOTON_FLUX)
-    print("  4B Done !!")
-
-
-    # --- Step 5: Post-Process for Quantum Efficiency (Task 4) ---
-    print("\n--- STEP 5: Calculating Quantum Efficiency ---")
-    DEVICE_WIDTH_CM = 50e-4
-    WAVELENGTH_NM = 650
-    qe_values = calculate_qe(dark_currents, light_currents, LIGHT_PHOTON_FLUX, DEVICE_WIDTH_CM, WAVELENGTH_NM)
+    # # --- Step 4: Run I-V Sweeps (Tasks 1 & 2) ---
+    # print("\n--- STEP 4: Running I-V Sweeps ---")
+    #
+    # # Using adaptive voltage stepping for better convergence at high bias
+    # initial_small_steps = np.linspace(0, -0.5, 26)  # 25 steps of -0.02 V
+    # medium_steps = np.linspace(-0.6, -2.0, 15)  # 14 steps of -0.1 V
+    # large_steps = np.linspace(-2.2, -4.0, 12)  # 11 steps of -0.2 V and one -0.3V
+    # iv_voltages = np.unique(np.concatenate([initial_small_steps, medium_steps, large_steps]))
+    # iv_voltages = iv_voltages[::-1]
+    # print("iv_voltages:",iv_voltages)
+    #
+    # LIGHT_PHOTON_FLUX = 1e17
+    # print("  4A: Running Dark Current Simulation (Task 1)")
+    # dark_currents = run_iv_sweep(device_name, iv_voltages, p_flux=0.0)
+    # print("  4A Done !!")
+    #
+    # print("  4B: Running Photocurrent Simulation (Task 2)")
+    # light_currents = run_iv_sweep(device_name, iv_voltages, p_flux=LIGHT_PHOTON_FLUX)
+    # print("  4B Done !!")
+    #
+    #
+    # # --- Step 5: Post-Process for Quantum Efficiency (Task 4) ---
+    # print("\n--- STEP 5: Calculating Quantum Efficiency ---")
+    # DEVICE_WIDTH_CM = 50e-4
+    # WAVELENGTH_NM = 650
+    # qe_values = calculate_qe(dark_currents, light_currents, LIGHT_PHOTON_FLUX, DEVICE_WIDTH_CM, WAVELENGTH_NM)
 
     # --- Step 6: Run C-V Simulation (Task 3) ---
     print("\n--- STEP 6: Running C-V Simulation ---")
@@ -429,19 +427,19 @@ if __name__ == "__main__":
     print("\n--- STEP 7: Generating Plots ---")
     plt.style.use('seaborn-v0_8-whitegrid')
 
-    # Plot 1: I-V Curves
-    plt.figure(1, figsize=(10, 6))
-    plt.semilogy(iv_voltages, np.abs(dark_currents), 'r-o', label='Dark Current')
-    plt.semilogy(iv_voltages, np.abs(light_currents), 'b-s', label='Photocurrent')
-    plt.xlabel("Anode Voltage (V)"), plt.ylabel("Current Magnitude (A/cm)"), plt.title("I-V Characteristics")
-    plt.legend(), plt.grid(True, which="both", ls="--"), plt.show()
-
-    # Plot 2: Quantum Efficiency
-    plt.figure(2, figsize=(10, 6))
-    plt.plot(iv_voltages, qe_values, 'g-^', label='QE')
-    plt.xlabel("Anode Voltage (V)"), plt.ylabel("External Quantum Efficiency (%)"), plt.title(
-        f"QE @ {WAVELENGTH_NM} nm")
-    plt.legend(), plt.grid(True), plt.ylim(bottom=0), plt.show()
+    # # Plot 1: I-V Curves
+    # plt.figure(1, figsize=(10, 6))
+    # plt.semilogy(iv_voltages, np.abs(dark_currents), 'r-o', label='Dark Current')
+    # plt.semilogy(iv_voltages, np.abs(light_currents), 'b-s', label='Photocurrent')
+    # plt.xlabel("Anode Voltage (V)"), plt.ylabel("Current Magnitude (A/cm)"), plt.title("I-V Characteristics")
+    # plt.legend(), plt.grid(True, which="both", ls="--"), plt.show()
+    #
+    # # Plot 2: Quantum Efficiency
+    # plt.figure(2, figsize=(10, 6))
+    # plt.plot(iv_voltages, qe_values, 'g-^', label='QE')
+    # plt.xlabel("Anode Voltage (V)"), plt.ylabel("External Quantum Efficiency (%)"), plt.title(
+    #     f"QE @ {WAVELENGTH_NM} nm")
+    # plt.legend(), plt.grid(True), plt.ylim(bottom=0), plt.show()
 
     # Plot 3: C-V and Mott-Schottky
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(16, 6))
