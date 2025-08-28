@@ -225,9 +225,9 @@ for region in ["p_region", "n_region"]:
 print("    Step 2/2: Assembling continuity equations and solving the full system...")
 for region in ["p_region", "n_region"]:
     devsim.equation(device=device_name, region=region, name="ElectronContinuityEquation", variable_name="Electrons",
-                    node_model="NetRecombination", edge_model="ElectronCurrent", variable_update="positive")
+                    node_model="NetRecombination", edge_model="ElectronCurrent", variable_update="log_damp")
     devsim.equation(device=device_name, region=region, name="HoleContinuityEquation", variable_name="Holes",
-                    node_model="NetRecombination", edge_model="NegHoleCurrent", variable_update="positive")
+                    node_model="NetRecombination", edge_model="NegHoleCurrent", variable_update="log_damp")
 devsim.interface_equation(device=device_name, interface="pn_junction", name="ElectronContinuityEquation",
                           interface_model="Electrons_continuity", type="continuous")
 devsim.interface_equation(device=device_name, interface="pn_junction", name="HoleContinuityEquation",
@@ -247,7 +247,7 @@ for i, life in enumerate(ramp_lifetimes):
     devsim.set_parameter(name="taun", value=life)
     devsim.set_parameter(name="taup", value=life)
     relative_tolerance = 1e-9 if life != target_lifetime else 1e-9
-    devsim.solve(type="dc", absolute_error=1e10, relative_error=relative_tolerance, maximum_iterations=200)
+    devsim.solve(type="dc", absolute_error=5.0, relative_error=relative_tolerance, maximum_iterations=200)
 
 print("\n✅ Step 3 complete: Full photodiode model is defined and solved for equilibrium.")
 
@@ -261,14 +261,28 @@ def run_iv_sweep(device, voltages, p_flux):
     currents = []
     devsim.set_parameter(name="PhotonFlux", value=p_flux)
     for v in voltages:
-        print(f"\n\n V:{v} \n\n ================================================================================")
+        print(f"\nSetting Anode Bias: {v:.3f} V")
         devsim.set_parameter(device=device, name="anode_bias", value=v)
-        devsim.solve(type="dc", absolute_error=1e10, relative_error=1e-12, maximum_iterations=300)
-        e_current = devsim.get_contact_current(device=device, contact="anode", equation="ElectronContinuityEquation")
-        h_current = devsim.get_contact_current(device=device, contact="anode", equation="HoleContinuityEquation")
-        currents.append(e_current + h_current)
-    devsim.set_parameter(device=device, name="anode_bias", value=0.0)
+        try:
+            # Add maximum_divergence and increase maximum_iterations
+            devsim.solve(type="dc", absolute_error=1e10, relative_error=1e-12,
+                         maximum_iterations=400,  # Increased from 300
+                         maximum_divergence=10)  # New parameter
+            e_current = devsim.get_contact_current(device=device, contact="anode",
+                                                   equation="ElectronContinuityEquation")
+            h_current = devsim.get_contact_current(device=device, contact="anode", equation="HoleContinuityEquation")
+            currents.append(e_current + h_current)
+            print(f"✅ V = {v:.3f} V, Current = {currents[-1]:.4e} A/cm")
+        except devsim.error as msg:
+            # Catch the error, report it, and append a NaN
+            print(f"❌ CONVERGENCE FAILED at V = {v:.3f} V. Error: {msg}")
+            currents.append(float('nan'))
+            # Optional: break the loop if one failure is enough
+            break
+
+    devsim.set_parameter(device=device, name="anode_bias", value=0.0)  # Reset bias at the end
     return np.array(currents)
+
 
 def calculate_qe(dark_currents, light_currents, p_flux, area_cm2, wavelength_nm):
     q, h, c = 1.602e-19, 6.626e-34, 3.0e8
@@ -307,9 +321,10 @@ if __name__ == "__main__":
     print("\n--- STEP 4: Running I-V Sweeps ---")
 
     # Using adaptive voltage stepping for better convergence at high bias
-    voltages_coarse = np.linspace(0, -4.0, 41)
-    voltages_fine = np.linspace(-4.1, -4.5, 11)
-    iv_voltages = np.concatenate([voltages_coarse, voltages_fine])
+    initial_small_steps = np.linspace(0, -0.5, 26)  # 25 steps of -0.02 V
+    medium_steps = np.linspace(-0.6, -2.0, 15)  # 14 steps of -0.1 V
+    large_steps = np.linspace(-2.2, -4.0, 12)  # 11 steps of -0.2 V and one -0.3V
+    iv_voltages = np.unique(np.concatenate([initial_small_steps, medium_steps, large_steps]))
 
     LIGHT_PHOTON_FLUX = 1e17
     print("  4A: Running Dark Current Simulation (Task 1)")
