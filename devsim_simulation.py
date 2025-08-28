@@ -194,6 +194,7 @@ for variable in ["Potential", "Electrons", "Holes"]:
     devsim.interface_model(device=device_name, interface="pn_junction", name=f"{variable}_continuity:{variable}@r1",
                            equation="-1.0")
 
+
 # --- Part D: Solve for Initial Equilibrium (Staged Method with Correct Initial Guess) ---
 print("  3D: Solving for initial equilibrium state (two-step method)...")
 print("    Creating robust initial guess based on charge neutrality...")
@@ -205,15 +206,23 @@ for region in ["p_region", "n_region"]:
     devsim.set_node_values(device=device_name, region=region, name="Potential", init_from="InitialPotential")
 
 print("    Step 1/2: Assembling and solving for Potential only...")
+# FIRST: Setup Potential equation in regions
 for region in ["p_region", "n_region"]:
-    devsim.equation(device=device_name, region=region, name="PotentialEquation", variable_name="Potential",
-                    edge_model="DField", variable_update="log_damp")
+    devsim.equation(device=device_name, region=region, name="PotentialEquation",
+                    variable_name="Potential",
+                    edge_model="DField",
+                    variable_update="log_damp")
+
+# Setup contact equations for Potential (without edge_charge_model initially)
 for contact in ["anode", "cathode"]:
     devsim.contact_equation(device=device_name, contact=contact, name="PotentialEquation",
                            node_model=f"{contact}_potential_bc")
 
+# Setup interface equation for Potential
 devsim.interface_equation(device=device_name, interface="pn_junction", name="PotentialEquation",
                           interface_model="Potential_continuity", type="continuous")
+
+# Solve for Potential only
 devsim.solve(type="dc", absolute_error=1e-10, relative_error=1e-12, maximum_iterations=50)
 
 print("    Updating carrier guess using Boltzmann statistics...")
@@ -226,19 +235,30 @@ for region in ["p_region", "n_region"]:
     devsim.set_node_values(device=device_name, region=region, name="Holes", init_from="UpdatedHoles")
 
 print("    Step 2/2: Assembling continuity equations and solving the full system...")
+# SECOND: Setup continuity equations in regions
 for region in ["p_region", "n_region"]:
-    devsim.equation(device=device_name, region=region, name="ElectronContinuityEquation", variable_name="Electrons",
-                    node_model="NetRecombination", edge_model="ElectronCurrent", variable_update="log_damp")
-    devsim.equation(device=device_name, region=region, name="HoleContinuityEquation", variable_name="Holes",
-                    node_model="NetRecombination", edge_model="NegHoleCurrent", variable_update="log_damp")
+    devsim.equation(device=device_name, region=region, name="ElectronContinuityEquation",
+                    variable_name="Electrons",
+                    node_model="NetRecombination",
+                    edge_model="ElectronCurrent",
+                    variable_update="log_damp")
+    devsim.equation(device=device_name, region=region, name="HoleContinuityEquation",
+                    variable_name="Holes",
+                    node_model="NetRecombination",
+                    edge_model="NegHoleCurrent",
+                    variable_update="log_damp")
+
+# Setup interface equations for continuity
 devsim.interface_equation(device=device_name, interface="pn_junction", name="ElectronContinuityEquation",
                           interface_model="Electrons_continuity", type="continuous")
 devsim.interface_equation(device=device_name, interface="pn_junction", name="HoleContinuityEquation",
                           interface_model="Holes_continuity", type="continuous")
 
+# CRITICAL: Setup ALL contact equations WITH edge_charge_model for Potential
 for contact in ["anode", "cathode"]:
     devsim.contact_equation(device=device_name, contact=contact, name="PotentialEquation",
-                            node_model=f"{contact}_potential_bc")
+                            node_model=f"{contact}_potential_bc",
+                            edge_charge_model="DField")  # THIS IS CRITICAL FOR C-V
     devsim.contact_equation(device=device_name, contact=contact, name="ElectronContinuityEquation",
                             node_model=f"{contact}_electrons_bc",
                             edge_current_model="ElectronCurrent")
@@ -246,22 +266,15 @@ for contact in ["anode", "cathode"]:
                             node_model=f"{contact}_holes_bc",
                             edge_current_model="HoleCurrent")
 
-
-
 print("\n--- Final Solve: Using a Ramping Strategy for Stability ---")
 target_lifetime = 1e-7
 ramp_lifetimes = [1e-13, 1e-12, 1e-11, 1e-10, 1e-9, 1e-8, target_lifetime]
 for i, life in enumerate(ramp_lifetimes):
-    print("ramp_lifetimes:",life)
-    print(f"!!Ramp Step {i + 1}/{len(ramp_lifetimes)}: Solving with taun/taup = {life:.1e} s")
+    print(f"Ramp Step {i + 1}/{len(ramp_lifetimes)}: Solving with taun/taup = {life:.1e} s")
     devsim.set_parameter(name="taun", value=life)
     devsim.set_parameter(name="taup", value=life)
     relative_tolerance = 1e-9 if life != target_lifetime else 1e-9
     devsim.solve(type="dc", absolute_error=5.0, relative_error=relative_tolerance, maximum_iterations=200)
-
-# This final high-precision solve "polishes" the result from the ramp
-print("\n--- Final Polish: Calculating robust equilibrium state with high precision ---")
-devsim.solve(type="dc", absolute_error=1.0, relative_error=1e-12, maximum_iterations=100)
 
 print("\n✅ Step 3 complete: Full photodiode model is defined and solved for equilibrium.")
 
@@ -332,73 +345,75 @@ def calculate_qe(dark_currents, light_currents, p_flux, device_width_cm, wavelen
 
 def run_cv_sweep(device, voltages, freq_hz):
     """
-    Calculates C-V using an improved numerical differentiation scheme (central difference).
+    Calculates C-V using numerical differentiation of charge.
     """
     capacitances = []
-    DELTA_V = 0.001  # Small voltage perturbation
+    DELTA_V = 0.001  # 1 mV step for numerical differentiation
 
-    print(f"\nStarting C-V sweep using central difference method...")
+    print(f"\nStarting C-V sweep...")
+
+    # Initial solve at starting voltage
+    devsim.set_parameter(device=device, name="anode_bias", value=voltages[0])
+    devsim.solve(type="dc", absolute_error=10.0, relative_error=1e-9, maximum_iterations=100)
 
     for i, v in enumerate(voltages):
         print(f"Step {i + 1}/{len(voltages)}: Bias = {v:.2f} V")
 
         try:
-            # Solve at V - delta_V/2
+            # Solve at V - DELTA_V/2
             devsim.set_parameter(device=device, name="anode_bias", value=v - DELTA_V / 2.0)
-            devsim.solve(type="dc", absolute_error=1.0, relative_error=1e-12, maximum_iterations=100)
+            devsim.solve(type="dc", absolute_error=10.0, relative_error=1e-9, maximum_iterations=100)
             q1 = devsim.get_contact_charge(device=device, contact="anode", equation="PotentialEquation")
 
-            # Solve at V + delta_V/2
+            # Solve at V + DELTA_V/2
             devsim.set_parameter(device=device, name="anode_bias", value=v + DELTA_V / 2.0)
-            devsim.solve(type="dc", absolute_error=1.0, relative_error=1e-12, maximum_iterations=100)
+            devsim.solve(type="dc", absolute_error=10.0, relative_error=1e-9, maximum_iterations=100)
             q2 = devsim.get_contact_charge(device=device, contact="anode", equation="PotentialEquation")
 
-            # Calculate capacitance C = dQ/dV
+            # Calculate capacitance
             C = abs(q2 - q1) / DELTA_V
             capacitances.append(C)
 
-            print(f"    C = {C * 1e12:.3f} pF/cm")
+            print(f"  C = {C * 1e12:.3f} pF/cm (q1={q1:.3e} C/cm, q2={q2:.3e} C/cm)")
 
         except devsim.error as msg:
-            print(f"    Failed at V = {v:.2f} V: {msg}")
+            print(f"  Failed at V = {v:.2f} V: {msg}")
             capacitances.append(float('nan'))
 
-    # Reset bias at the end
+    # Reset bias
     devsim.set_parameter(device=device, name="anode_bias", value=0.0)
     return np.array(capacitances)
-
-
 
 # ==============================================================================
 #                      MAIN SIMULATION AND VISUALIZATION
 # ==============================================================================
 if __name__ == "__main__":
-    # # --- Step 4: Run I-V Sweeps (Tasks 1 & 2) ---
-    # print("\n--- STEP 4: Running I-V Sweeps ---")
-    #
-    # # Using adaptive voltage stepping for better convergence at high bias
-    # initial_small_steps = np.linspace(0, -0.5, 26)  # 25 steps of -0.02 V
-    # medium_steps = np.linspace(-0.6, -2.0, 15)  # 14 steps of -0.1 V
-    # large_steps = np.linspace(-2.2, -4.0, 12)  # 11 steps of -0.2 V and one -0.3V
-    # iv_voltages = np.unique(np.concatenate([initial_small_steps, medium_steps, large_steps]))
-    # iv_voltages = iv_voltages[::-1]
-    # print("iv_voltages:",iv_voltages)
-    #
-    # LIGHT_PHOTON_FLUX = 1e17
-    # print("  4A: Running Dark Current Simulation (Task 1)")
-    # dark_currents = run_iv_sweep(device_name, iv_voltages, p_flux=0.0)
-    # print("  4A Done !!")
-    #
-    # print("  4B: Running Photocurrent Simulation (Task 2)")
-    # light_currents = run_iv_sweep(device_name, iv_voltages, p_flux=LIGHT_PHOTON_FLUX)
-    # print("  4B Done !!")
-    #
-    #
-    # # --- Step 5: Post-Process for Quantum Efficiency (Task 4) ---
-    # print("\n--- STEP 5: Calculating Quantum Efficiency ---")
-    # DEVICE_WIDTH_CM = 50e-4
-    # WAVELENGTH_NM = 650
-    # qe_values = calculate_qe(dark_currents, light_currents, LIGHT_PHOTON_FLUX, DEVICE_WIDTH_CM, WAVELENGTH_NM)
+    # --- Step 4: Run I-V Sweeps (Tasks 1 & 2) ---
+    print("\n--- STEP 4: Running I-V Sweeps ---")
+
+    # Using adaptive voltage stepping for better convergence at high bias
+    initial_small_steps = np.linspace(0, -0.5, 26)  # 25 steps of -0.02 V
+    medium_steps = np.linspace(-0.6, -2.0, 15)  # 14 steps of -0.1 V
+    large_steps = np.linspace(-2.2, -4.0, 12)  # 11 steps of -0.2 V and one -0.3V
+    iv_voltages = np.unique(np.concatenate([initial_small_steps, medium_steps, large_steps]))
+    iv_voltages = iv_voltages[::-1]
+    print("iv_voltages:",iv_voltages)
+
+    LIGHT_PHOTON_FLUX = 1e17
+    print("  4A: Running Dark Current Simulation (Task 1)")
+    dark_currents = run_iv_sweep(device_name, iv_voltages, p_flux=0.0)
+    print("  4A Done !!")
+
+    print("  4B: Running Photocurrent Simulation (Task 2)")
+    light_currents = run_iv_sweep(device_name, iv_voltages, p_flux=LIGHT_PHOTON_FLUX)
+    print("  4B Done !!")
+
+
+    # --- Step 5: Post-Process for Quantum Efficiency (Task 4) ---
+    print("\n--- STEP 5: Calculating Quantum Efficiency ---")
+    DEVICE_WIDTH_CM = 50e-4
+    WAVELENGTH_NM = 650
+    qe_values = calculate_qe(dark_currents, light_currents, LIGHT_PHOTON_FLUX, DEVICE_WIDTH_CM, WAVELENGTH_NM)
 
     # --- Step 6: Run C-V Simulation (Task 3) ---
     print("\n--- STEP 6: Running C-V Simulation ---")
@@ -410,19 +425,19 @@ if __name__ == "__main__":
     print("\n--- STEP 7: Generating Plots ---")
     plt.style.use('seaborn-v0_8-whitegrid')
 
-    # # Plot 1: I-V Curves
-    # plt.figure(1, figsize=(10, 6))
-    # plt.semilogy(iv_voltages, np.abs(dark_currents), 'r-o', label='Dark Current')
-    # plt.semilogy(iv_voltages, np.abs(light_currents), 'b-s', label='Photocurrent')
-    # plt.xlabel("Anode Voltage (V)"), plt.ylabel("Current Magnitude (A/cm)"), plt.title("I-V Characteristics")
-    # plt.legend(), plt.grid(True, which="both", ls="--"), plt.show()
-    #
-    # # Plot 2: Quantum Efficiency
-    # plt.figure(2, figsize=(10, 6))
-    # plt.plot(iv_voltages, qe_values, 'g-^', label='QE')
-    # plt.xlabel("Anode Voltage (V)"), plt.ylabel("External Quantum Efficiency (%)"), plt.title(
-    #     f"QE @ {WAVELENGTH_NM} nm")
-    # plt.legend(), plt.grid(True), plt.ylim(bottom=0), plt.show()
+    # Plot 1: I-V Curves
+    plt.figure(1, figsize=(10, 6))
+    plt.semilogy(iv_voltages, np.abs(dark_currents), 'r-o', label='Dark Current')
+    plt.semilogy(iv_voltages, np.abs(light_currents), 'b-s', label='Photocurrent')
+    plt.xlabel("Anode Voltage (V)"), plt.ylabel("Current Magnitude (A/cm)"), plt.title("I-V Characteristics")
+    plt.legend(), plt.grid(True, which="both", ls="--"), plt.show()
+
+    # Plot 2: Quantum Efficiency
+    plt.figure(2, figsize=(10, 6))
+    plt.plot(iv_voltages, qe_values, 'g-^', label='QE')
+    plt.xlabel("Anode Voltage (V)"), plt.ylabel("External Quantum Efficiency (%)"), plt.title(
+        f"QE @ {WAVELENGTH_NM} nm")
+    plt.legend(), plt.grid(True), plt.ylim(bottom=0), plt.show()
 
     # Plot 3: C-V and Mott-Schottky
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(16, 6))
