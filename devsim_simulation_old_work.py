@@ -11,7 +11,7 @@ import matplotlib.pyplot as plt
 # ==============================================================================
 # --- Device and File Names ---
 device_name = "photodiode"
-mesh_file = "output/photodiode_mesh_old.msh"
+mesh_file = "output/photodiode_mesh.msh"
 
 # --- Photodiode Simulation Parameters ---
 # Set photon_flux to 0.0 for a simulation in the dark.
@@ -345,35 +345,39 @@ def calculate_qe(dark_currents, light_currents, p_flux, device_width_cm, wavelen
 
 def run_cv_sweep(device, voltages, freq_hz):
     """
-    Calculates C-V using the robust small-signal AC analysis.
+    Calculates C-V using numerical differentiation of charge.
     """
     capacitances = []
-    print(f"\nStarting C-V sweep using AC analysis at {freq_hz / 1e6:.1f} MHz...")
+    DELTA_V = 0.001  # 1 mV step for numerical differentiation
+
+    print(f"\nStarting C-V sweep...")
+
+    # Initial solve at starting voltage
+    devsim.set_parameter(device=device, name="anode_bias", value=voltages[0])
+    devsim.solve(type="dc", absolute_error=10.0, relative_error=1e-9, maximum_iterations=100)
 
     for i, v in enumerate(voltages):
-        # Set the DC bias point for this step
-        devsim.set_parameter(device=device, name="anode_bias", value=v)
+        print(f"Step {i + 1}/{len(voltages)}: Bias = {v:.2f} V")
 
         try:
-            # First, solve for the DC operating point
-            devsim.solve(type="dc", absolute_error=5.0, relative_error=1e-9, maximum_iterations=100)
+            # Solve at V - DELTA_V/2
+            devsim.set_parameter(device=device, name="anode_bias", value=v - DELTA_V / 2.0)
+            devsim.solve(type="dc", absolute_error=10.0, relative_error=1e-9, maximum_iterations=100)
+            q1 = devsim.get_contact_charge(device=device, contact="anode", equation="PotentialEquation")
 
-            # Now, run the AC analysis at this bias point
-            devsim.solve(type="ac", frequency=freq_hz)
+            # Solve at V + DELTA_V/2
+            devsim.set_parameter(device=device, name="anode_bias", value=v + DELTA_V / 2.0)
+            devsim.solve(type="dc", absolute_error=10.0, relative_error=1e-9, maximum_iterations=100)
+            q2 = devsim.get_contact_charge(device=device, contact="anode", equation="PotentialEquation")
 
-            # Extract the capacitance from the contact admittance
-            # get_contact_charge returns the imaginary part of the admittance (I/V) in an AC solve.
-            # Admittance Y = G + j*omega*C. We want C.
-            # Imag(Y) = omega*C  =>  C = Imag(Y) / omega
-            omega = 2 * np.pi * freq_hz
-            imag_admittance = devsim.get_contact_charge(device=device, contact="anode", equation="PotentialEquation")
-            C = imag_admittance / omega
+            # Calculate capacitance
+            C = abs(q2 - q1) / DELTA_V
             capacitances.append(C)
 
-            print(f"  Step {i + 1}/{len(voltages)}: V = {v:.2f} V, C = {C * 1e12:.3f} pF/cm")
+            print(f"  C = {C * 1e12:.3f} pF/cm (q1={q1:.3e} C/cm, q2={q2:.3e} C/cm)")
 
         except devsim.error as msg:
-            print(f"  ❌ Failed at V = {v:.2f} V: {msg}")
+            print(f"  Failed at V = {v:.2f} V: {msg}")
             capacitances.append(float('nan'))
 
     # Reset bias
@@ -384,32 +388,32 @@ def run_cv_sweep(device, voltages, freq_hz):
 #                      MAIN SIMULATION AND VISUALIZATION
 # ==============================================================================
 if __name__ == "__main__":
-    # # --- Step 4: Run I-V Sweeps (Tasks 1 & 2) ---
-    # print("\n--- STEP 4: Running I-V Sweeps ---")
-    #
-    # # Using adaptive voltage stepping for better convergence at high bias
-    # initial_small_steps = np.linspace(0, -0.5, 26)  # 25 steps of -0.02 V
-    # medium_steps = np.linspace(-0.6, -2.0, 15)  # 14 steps of -0.1 V
-    # large_steps = np.linspace(-2.2, -4.0, 12)  # 11 steps of -0.2 V and one -0.3V
-    # iv_voltages = np.unique(np.concatenate([initial_small_steps, medium_steps, large_steps]))
-    # iv_voltages = iv_voltages[::-1]
-    # print("iv_voltages:",iv_voltages)
-    #
-    # LIGHT_PHOTON_FLUX = 1e17
-    # print("  4A: Running Dark Current Simulation (Task 1)")
-    # dark_currents = run_iv_sweep(device_name, iv_voltages, p_flux=0.0)
-    # print("  4A Done !!")
-    #
-    # print("  4B: Running Photocurrent Simulation (Task 2)")
-    # light_currents = run_iv_sweep(device_name, iv_voltages, p_flux=LIGHT_PHOTON_FLUX)
-    # print("  4B Done !!")
+    # --- Step 4: Run I-V Sweeps (Tasks 1 & 2) ---
+    print("\n--- STEP 4: Running I-V Sweeps ---")
+
+    # Using adaptive voltage stepping for better convergence at high bias
+    initial_small_steps = np.linspace(0, -0.5, 26)  # 25 steps of -0.02 V
+    medium_steps = np.linspace(-0.6, -2.0, 15)  # 14 steps of -0.1 V
+    large_steps = np.linspace(-2.2, -4.0, 12)  # 11 steps of -0.2 V and one -0.3V
+    iv_voltages = np.unique(np.concatenate([initial_small_steps, medium_steps, large_steps]))
+    iv_voltages = iv_voltages[::-1]
+    print("iv_voltages:",iv_voltages)
+
+    LIGHT_PHOTON_FLUX = 1e15
+    print("  4A: Running Dark Current Simulation (Task 1)")
+    dark_currents = run_iv_sweep(device_name, iv_voltages, p_flux=0.0)
+    print("  4A Done !!")
+
+    print("  4B: Running Photocurrent Simulation (Task 2)")
+    light_currents = run_iv_sweep(device_name, iv_voltages, p_flux=LIGHT_PHOTON_FLUX)
+    print("  4B Done !!")
 
 
-    # # --- Step 5: Post-Process for Quantum Efficiency (Task 4) ---
-    # print("\n--- STEP 5: Calculating Quantum Efficiency ---")
-    # DEVICE_WIDTH_CM = 50e-4
-    # WAVELENGTH_NM = 650
-    # qe_values = calculate_qe(dark_currents, light_currents, LIGHT_PHOTON_FLUX, DEVICE_WIDTH_CM, WAVELENGTH_NM)
+    # --- Step 5: Post-Process for Quantum Efficiency (Task 4) ---
+    print("\n--- STEP 5: Calculating Quantum Efficiency ---")
+    DEVICE_WIDTH_CM = 4.0e-4
+    WAVELENGTH_NM = 650
+    qe_values = calculate_qe(dark_currents, light_currents, LIGHT_PHOTON_FLUX, DEVICE_WIDTH_CM, WAVELENGTH_NM)
 
     # --- Step 6: Run C-V Simulation (Task 3) ---
     print("\n--- STEP 6: Running C-V Simulation ---")
@@ -419,21 +423,28 @@ if __name__ == "__main__":
 
     # --- Step 7: Visualize All Results ---
     print("\n--- STEP 7: Generating Plots ---")
+
+    # --- ADD THIS DEBUGGING BLOCK ---
+    print("\n--- DEBUGGING QE DATA ---")
+    print(f"Light currents being used for QE (first 5 values): {light_currents[:5]}")
+    print(f"Dark currents being used for QE (first 5 values): {dark_currents[:5]}")
+    print(f"Resulting QE values to be plotted (first 5 values): {qe_values[:5]}")
+
     plt.style.use('seaborn-v0_8-whitegrid')
 
-    # # Plot 1: I-V Curves
-    # plt.figure(1, figsize=(10, 6))
-    # plt.semilogy(iv_voltages, np.abs(dark_currents), 'r-o', label='Dark Current')
-    # plt.semilogy(iv_voltages, np.abs(light_currents), 'b-s', label='Photocurrent')
-    # plt.xlabel("Anode Voltage (V)"), plt.ylabel("Current Magnitude (A/cm)"), plt.title("I-V Characteristics")
-    # plt.legend(), plt.grid(True, which="both", ls="--"), plt.show()
-    #
-    # # Plot 2: Quantum Efficiency
-    # plt.figure(2, figsize=(10, 6))
-    # plt.plot(iv_voltages, qe_values, 'g-^', label='QE')
-    # plt.xlabel("Anode Voltage (V)"), plt.ylabel("External Quantum Efficiency (%)"), plt.title(
-    #     f"QE @ {WAVELENGTH_NM} nm")
-    # plt.legend(), plt.grid(True), plt.ylim(bottom=0), plt.show()
+    # Plot 1: I-V Curves
+    plt.figure(1, figsize=(10, 6))
+    plt.semilogy(iv_voltages, np.abs(dark_currents), 'r-o', label='Dark Current')
+    plt.semilogy(iv_voltages, np.abs(light_currents), 'b-s', label='Photocurrent')
+    plt.xlabel("Anode Voltage (V)"), plt.ylabel("Current Magnitude (A/cm)"), plt.title("I-V Characteristics")
+    plt.legend(), plt.grid(True, which="both", ls="--"), plt.show()
+
+    # Plot 2: Quantum Efficiency
+    plt.figure(2, figsize=(10, 6))
+    plt.plot(iv_voltages, qe_values, 'g-^', label='QE')
+    plt.xlabel("Anode Voltage (V)"), plt.ylabel("External Quantum Efficiency (%)"), plt.title(
+        f"QE @ {WAVELENGTH_NM} nm")
+    plt.legend(), plt.grid(True), plt.ylim(bottom=0), plt.show()
 
     # Plot 3: C-V and Mott-Schottky
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(16, 6))
