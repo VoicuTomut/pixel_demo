@@ -388,14 +388,7 @@ def run_cv_sweep(device, voltages, freq_hz):
 def run_cv_sweep_ac(device, voltages, freq_hz):
     """
     Calculates C-V using the more robust small-signal AC analysis method.
-
-    Args:
-        device (str): The name of the device.
-        voltages (np.array): An array of DC voltage points for the sweep.
-        freq_hz (float): The frequency for the AC analysis (e.g., 1e6 for 1 MHz).
-
-    Returns:
-        np.array: The calculated capacitances in F/cm.
+    This is the FINAL CORRECTED version.
     """
     capacitances = []
     omega = 2.0 * np.pi * freq_hz  # Angular frequency (rad/s)
@@ -403,29 +396,27 @@ def run_cv_sweep_ac(device, voltages, freq_hz):
     print(f"\nStarting AC C-V sweep at {freq_hz / 1e6:.1f} MHz...")
 
     for i, v in enumerate(voltages):
-        # Set the DC bias voltage for this step
         devsim.set_parameter(device=device, name="anode_bias", value=v)
         print(f"Step {i + 1}/{len(voltages)}: Bias = {v:.2f} V")
 
         try:
-            # Step 1: Solve for the DC operating point with tight tolerances.
-            # This establishes the baseline electrical state of the device at voltage 'v'.
-            devsim.solve(type="dc", absolute_error=1e10, relative_error=1e-9, maximum_iterations=50)
+            # FIX 1: Use TIGHT tolerances to get a physically correct DC solution.
+            # This is the key to fixing the linear shape problem.
+            devsim.solve(type="dc", absolute_error=10.0, relative_error=1e-9, maximum_iterations=50)
 
-            # Step 2: Perform the small-signal AC analysis at this DC point.
-            # This calculates the device's response to the small AC signal.
+            # Perform the small-signal AC analysis at this correct DC point.
             devsim.solve(type="ac", frequency=freq_hz)
 
-            # Step 3: Get the imaginary part of the total AC current.
-            # For a capacitor, the current is purely imaginary (I = jωCV).
-            # The "_ac" suffix is automatically added by devsim for AC analysis.
-            imag_i = devsim.get_contact_current(device=device, contact="anode",
-                                                equation="ElectronContinuityEquation")
-            imag_i += devsim.get_contact_current(device=device, contact="anode", equation="HoleContinuityEquation")
+            # FIX 2: Use the original DC equation names to get the AC current.
+            # The simulator automatically returns the AC result after an AC solve.
+            imag_i_e = devsim.get_contact_current(device=device, contact="anode",
+                                                  equation="ElectronContinuityEquation")
+            imag_i_h = devsim.get_contact_current(device=device, contact="anode",
+                                                  equation="HoleContinuityEquation")
 
-            # Step 4: Calculate capacitance from the AC current.
-            # C = Im(I_ac) / ω
-            C = imag_i / omega
+            # FIX 3: Apply a negative sign to correct for the simulator's current
+            # direction convention and ensure capacitance is positive, as required by physics.
+            C = -(imag_i_e + imag_i_h) / omega
             capacitances.append(C)
             print(f"  ✅ C = {C * 1e12:.4f} pF/cm")
 
@@ -433,7 +424,6 @@ def run_cv_sweep_ac(device, voltages, freq_hz):
             print(f"  ❌ Failed at V = {v:.2f} V: {msg}")
             capacitances.append(float('nan'))
 
-    # Reset the bias to 0V at the end of the sweep
     devsim.set_parameter(device=device, name="anode_bias", value=0.0)
     return np.array(capacitances)
 
@@ -441,32 +431,32 @@ def run_cv_sweep_ac(device, voltages, freq_hz):
 #                      MAIN SIMULATION AND VISUALIZATION
 # ==============================================================================
 if __name__ == "__main__":
-    # # --- Step 4: Run I-V Sweeps (Tasks 1 & 2) ---
-    # print("\n--- STEP 4: Running I-V Sweeps ---")
-    #
-    # # Using adaptive voltage stepping for better convergence at high bias
-    # initial_small_steps = np.linspace(0, -0.5, 26)  # 25 steps of -0.02 V
-    # medium_steps = np.linspace(-0.6, -2.0, 15)  # 14 steps of -0.1 V
-    # large_steps = np.linspace(-2.2, -4.0, 12)  # 11 steps of -0.2 V and one -0.3V
-    # iv_voltages = np.unique(np.concatenate([initial_small_steps, medium_steps, large_steps]))
-    # iv_voltages = iv_voltages[::-1]
-    # print("iv_voltages:",iv_voltages)
-    #
-    # LIGHT_PHOTON_FLUX = 1e15
-    # print("  4A: Running Dark Current Simulation (Task 1)")
-    # dark_currents = run_iv_sweep(device_name, iv_voltages, p_flux=0.0)
-    # print("  4A Done !!")
-    #
-    # print("  4B: Running Photocurrent Simulation (Task 2)")
-    # light_currents = run_iv_sweep(device_name, iv_voltages, p_flux=LIGHT_PHOTON_FLUX)
-    # print("  4B Done !!")
-    #
-    #
-    # # --- Step 5: Post-Process for Quantum Efficiency (Task 4) ---
-    # print("\n--- STEP 5: Calculating Quantum Efficiency ---")
-    # DEVICE_WIDTH_CM = 4.0e-4
-    # WAVELENGTH_NM = 650
-    # qe_values = calculate_qe(dark_currents, light_currents, LIGHT_PHOTON_FLUX, DEVICE_WIDTH_CM, WAVELENGTH_NM)
+    # --- Step 4: Run I-V Sweeps (Tasks 1 & 2) ---
+    print("\n--- STEP 4: Running I-V Sweeps ---")
+
+    # Using adaptive voltage stepping for better convergence at high bias
+    initial_small_steps = np.linspace(0, -0.5, 26)  # 25 steps of -0.02 V
+    medium_steps = np.linspace(-0.6, -2.0, 15)  # 14 steps of -0.1 V
+    large_steps = np.linspace(-2.2, -4.0, 12)  # 11 steps of -0.2 V and one -0.3V
+    iv_voltages = np.unique(np.concatenate([initial_small_steps, medium_steps, large_steps]))
+    iv_voltages = iv_voltages[::-1]
+    print("iv_voltages:",iv_voltages)
+
+    LIGHT_PHOTON_FLUX = 1e17
+    print("  4A: Running Dark Current Simulation (Task 1)")
+    dark_currents = run_iv_sweep(device_name, iv_voltages, p_flux=0.0)
+    print("  4A Done !!")
+
+    print("  4B: Running Photocurrent Simulation (Task 2)")
+    light_currents = run_iv_sweep(device_name, iv_voltages, p_flux=LIGHT_PHOTON_FLUX)
+    print("  4B Done !!")
+
+
+    # --- Step 5: Post-Process for Quantum Efficiency (Task 4) ---
+    print("\n--- STEP 5: Calculating Quantum Efficiency ---")
+    DEVICE_WIDTH_CM = 4.0e-4
+    WAVELENGTH_NM = 650
+    qe_values = calculate_qe(dark_currents, light_currents, LIGHT_PHOTON_FLUX, DEVICE_WIDTH_CM, WAVELENGTH_NM)
 
     # --- Step 6: Run C-V Simulation (Task 3) ---
     print("\n--- STEP 6: Running C-V Simulation ---")
@@ -474,30 +464,30 @@ if __name__ == "__main__":
 
     capacitances = run_cv_sweep_ac(device_name, cv_voltages, freq_hz=1e6)
 
-    # # --- Step 7: Visualize All Results ---
-    # print("\n--- STEP 7: Generating Plots ---")
-    #
-    # # --- ADD THIS DEBUGGING BLOCK ---
-    # print("\n--- DEBUGGING QE DATA ---")
-    # print(f"Light currents being used for QE (first 5 values): {light_currents[:5]}")
-    # print(f"Dark currents being used for QE (first 5 values): {dark_currents[:5]}")
-    # print(f"Resulting QE values to be plotted (first 5 values): {qe_values[:5]}")
-    #
-    # plt.style.use('seaborn-v0_8-whitegrid')
-    #
-    # # Plot 1: I-V Curves
-    # plt.figure(1, figsize=(10, 6))
-    # plt.semilogy(iv_voltages, np.abs(dark_currents), 'r-o', label='Dark Current')
-    # plt.semilogy(iv_voltages, np.abs(light_currents), 'b-s', label='Photocurrent')
-    # plt.xlabel("Anode Voltage (V)"), plt.ylabel("Current Magnitude (A/cm)"), plt.title("I-V Characteristics")
-    # plt.legend(), plt.grid(True, which="both", ls="--"), plt.show()
-    #
-    # # Plot 2: Quantum Efficiency
-    # plt.figure(2, figsize=(10, 6))
-    # plt.plot(iv_voltages, qe_values, 'g-^', label='QE')
-    # plt.xlabel("Anode Voltage (V)"), plt.ylabel("External Quantum Efficiency (%)"), plt.title(
-    #     f"QE @ {WAVELENGTH_NM} nm")
-    # plt.legend(), plt.grid(True), plt.ylim(bottom=0), plt.show()
+    # --- Step 7: Visualize All Results ---
+    print("\n--- STEP 7: Generating Plots ---")
+
+    # --- ADD THIS DEBUGGING BLOCK ---
+    print("\n--- DEBUGGING QE DATA ---")
+    print(f"Light currents being used for QE (first 5 values): {light_currents[:5]}")
+    print(f"Dark currents being used for QE (first 5 values): {dark_currents[:5]}")
+    print(f"Resulting QE values to be plotted (first 5 values): {qe_values[:5]}")
+
+    plt.style.use('seaborn-v0_8-whitegrid')
+
+    # Plot 1: I-V Curves
+    plt.figure(1, figsize=(10, 6))
+    plt.semilogy(iv_voltages, np.abs(dark_currents), 'r-o', label='Dark Current')
+    plt.semilogy(iv_voltages, np.abs(light_currents), 'b-s', label='Photocurrent')
+    plt.xlabel("Anode Voltage (V)"), plt.ylabel("Current Magnitude (A/cm)"), plt.title("I-V Characteristics")
+    plt.legend(), plt.grid(True, which="both", ls="--"), plt.show()
+
+    # Plot 2: Quantum Efficiency
+    plt.figure(2, figsize=(10, 6))
+    plt.plot(iv_voltages, qe_values, 'g-^', label='QE')
+    plt.xlabel("Anode Voltage (V)"), plt.ylabel("External Quantum Efficiency (%)"), plt.title(
+        f"QE @ {WAVELENGTH_NM} nm")
+    plt.legend(), plt.grid(True), plt.ylim(bottom=0), plt.show()
 
     # Plot 3: C-V and Mott-Schottky
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(16, 6))
