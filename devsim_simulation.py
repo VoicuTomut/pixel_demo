@@ -163,7 +163,7 @@ for region in ["p_region", "n_region"]:
     srh_eq = "(Electrons*Holes - n_i_squared) / (taup*(Electrons + IntrinsicElectrons) + taun*(Holes + IntrinsicHoles))"
     devsim.node_model(device=device_name, region=region, name="USRH", equation=srh_eq)
     devsim.node_model(device=device_name, region=region, name="OpticalGeneration",
-                      equation="PhotonFlux * alpha * exp(-alpha * (0.0 - y))")
+                      equation="PhotonFlux * alpha * exp(-alpha * y)")
     devsim.node_model(device=device_name, region=region, name="NetRecombination", equation="USRH - OpticalGeneration")
     devsim.node_model(device=device_name, region=region, name="NetRecombination:Electrons",
                       equation=f"diff({srh_eq}, Electrons)")

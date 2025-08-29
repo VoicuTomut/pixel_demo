@@ -1,12 +1,5 @@
 # create_mesh.py
-# This script generates a 2D mesh for a photodiode using Gmsh.
-# The output file "output/photodiode_mesh.msh" is designed to be used
-# as the input for the provided devsim_simulation.py script.
-#
-# CORRECTION V4:
-# Added a specific mesh size parameter for contacts ("MESH_CONTACT") to
-# provide more direct control over the mesh density at the cathode,
-# ensuring adequate resolution without making the entire bulk region too dense.
+# Corrected mesh generation script with improved mesh parameters
 
 import gmsh
 import os
@@ -24,11 +17,11 @@ P_DEPTH = 1.0 # Depth of the p-region
 # Defines the size of the insulating gap between the contact and junction.
 GAP_SIZE = 0.1 # um
 
-# --- NEW: Smart Mesh Density ---
-# Use a fine mesh near the junction and a coarse mesh elsewhere.
-MESH_FINE = 0.02    # Finer mesh size for the active junction area
-MESH_CONTACT = 0.02  # A specific, medium mesh size for the contacts
-MESH_COARSE = 0.1   # Coarser mesh size for non-critical corners
+# --- IMPROVED: Smart Mesh Density ---
+# FIXED: Better mesh parameters as recommended
+MESH_FINE = 0.02     # 20nm for junction area (was 0.005)
+MESH_CONTACT = 0.05  # 50nm for contacts (was 0.02)
+MESH_COARSE = 0.1    # 100nm for bulk regions (was 0.3)
 
 # --- Output Directory and File ---
 OUTPUT_DIR = "output"
@@ -43,6 +36,7 @@ gmsh.initialize(sys.argv)
 gmsh.model.add("photodiode")
 
 print("Starting smart mesh generation for 2D photodiode...")
+print(f"Mesh parameters: Fine={MESH_FINE}μm, Contact={MESH_CONTACT}μm, Coarse={MESH_COARSE}μm")
 
 # --- 1. Define Geometry Points ---
 # We now assign mesh sizes on a per-point basis. Gmsh will automatically
@@ -68,7 +62,7 @@ p6 = gmsh.model.geo.addPoint(p_x_end,   -P_DEPTH,  0, MESH_FINE)
 p_anode_start = gmsh.model.geo.addPoint(p_x_start + GAP_SIZE, 0, 0, MESH_FINE)
 p_anode_end   = gmsh.model.geo.addPoint(p_x_end - GAP_SIZE,   0, 0, MESH_FINE)
 
-print(f"Defined 10 geometric points with fine, contact, and coarse mesh sizes.")
+print(f"Defined 10 geometric points with adaptive mesh sizing")
 
 # --- 2. Define Lines from Points ---
 # The top surface is now broken into 5 segments
@@ -92,8 +86,10 @@ print("Defined boundary lines.")
 
 # --- 3. Define Surfaces from Lines ---
 # Create curve loops (closed paths of lines)
-cl_outer = gmsh.model.geo.addCurveLoop([l_top_left, l_gap1, l_anode, l_gap2, l_top_right, l_right_wall, l_cathode, l_left_wall])
-cl_p_region = gmsh.model.geo.addCurveLoop([l_gap1, l_anode, l_gap2, l_p_right, l_p_bottom, l_p_left])
+cl_outer = gmsh.model.geo.addCurveLoop([l_top_left, l_gap1, l_anode, l_gap2, l_top_right,
+                                         l_right_wall, l_cathode, l_left_wall])
+cl_p_region = gmsh.model.geo.addCurveLoop([l_gap1, l_anode, l_gap2, l_p_right,
+                                           l_p_bottom, l_p_left])
 
 # Create plane surfaces from the curve loops.
 s_n_region = gmsh.model.geo.addPlaneSurface([cl_outer, cl_p_region])
@@ -117,22 +113,32 @@ gmsh.model.addPhysicalGroup(1, [l_cathode], name="cathode")
 pn_junction_lines = [l_p_right, l_p_bottom, l_p_left]
 gmsh.model.addPhysicalGroup(1, pn_junction_lines, name="pn_junction")
 
-print("Assigned final physical groups.")
+print("Assigned physical groups.")
 
 # --- 5. Generate and Save Mesh ---
 gmsh.option.setNumber("Mesh.MshFileVersion", 2.2)
-
 gmsh.option.setNumber("Mesh.Algorithm", 6) # 6 = Frontal-Delaunay
-
 gmsh.option.setNumber("Mesh.Optimize", 1)
 
+# Generate 2D mesh
 gmsh.model.mesh.generate(2)
 print("2D smart mesh generated successfully.")
 
+# Report mesh statistics
+_, node_tags, _ = gmsh.model.mesh.getNodes()
+element_types, element_tags, _ = gmsh.model.mesh.getElements()
+num_elements = sum(len(tags) for tags in element_tags)
+print(f"Mesh statistics: {len(node_tags)} nodes, {num_elements} elements")
+
+# Create output directory if it doesn't exist
 if not os.path.exists(OUTPUT_DIR):
     os.makedirs(OUTPUT_DIR)
+    print(f"Created output directory: {OUTPUT_DIR}")
 
+# Save mesh file
 gmsh.write(MESH_FILE)
 print(f"Mesh file saved to: {MESH_FILE}")
 
+# Finalize Gmsh
 gmsh.finalize()
+print("✅ Mesh generation complete!")
