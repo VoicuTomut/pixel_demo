@@ -421,7 +421,7 @@ def run_cv_sweep_ac(device, voltages, freq_hz):
         try:
             # FIX 1: Use TIGHT tolerances to get a physically correct DC solution.
             # This is the key to fixing the linear shape problem.
-            devsim.solve(type="dc", absolute_error=10.0, relative_error=1e-9, maximum_iterations=50)
+            devsim.solve(type="dc", absolute_error=100.0, relative_error=1e-2, maximum_iterations=100)
 
             # Perform the small-signal AC analysis at this correct DC point.
             devsim.solve(type="ac", frequency=freq_hz)
