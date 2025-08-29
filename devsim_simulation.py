@@ -18,7 +18,6 @@ mesh_file = "output/photodiode_mesh.msh"
 # Set photon_flux > 0.0 for a simulation under illumination.
 photon_flux = 0.0  # Units: photons/cm^2/s
 # Absorption coefficient for a given wavelength.
-# alpha = 1e4 corresponds to ~650 nm wavelength in Silicon
 alpha = 1e4  # Units: 1/cm
 
 # ==============================================================================
@@ -62,8 +61,8 @@ def set_silicon_parameters(device, region):
     devsim.set_parameter(device=device, region=region, name="Permittivity", value=11.9 * 8.854e-14)
     devsim.set_parameter(device=device, region=region, name="IntrinsicCarrierDensity", value=1.0e10)
     devsim.set_parameter(device=device, region=region, name="ElectronCharge", value=1.6e-19)
-    devsim.set_parameter(device=device, region=region, name="taun", value=1.0e-7)
-    devsim.set_parameter(device=device, region=region, name="taup", value=1.0e-7)
+    devsim.set_parameter(device=device, region=region, name="taun", value=1.0e-6)
+    devsim.set_parameter(device=device, region=region, name="taup", value=1.0e-6)
 
 
 def define_doping(device, p_doping, n_doping):
@@ -93,7 +92,7 @@ def define_mobility_models(device, region):
 print("\nSetting silicon material parameters...")
 set_silicon_parameters(device=device_name, region="p_region")
 set_silicon_parameters(device=device_name, region="n_region")
-define_doping(device=device_name, p_doping=1e16, n_doping=1e18)
+define_doping(device=device_name, p_doping=1e15, n_doping=1e18)
 print("Defining doping-dependent mobility models...")
 define_mobility_models(device=device_name, region="p_region")
 define_mobility_models(device=device_name, region="n_region")
@@ -146,15 +145,12 @@ for region in ["p_region", "n_region"]:
     for v in ["Potential", "Electrons", "Holes"]:
         for n in ["n0", "n1"]: devsim.edge_model(device=device_name, region=region, name=f"ElectronCurrent:{v}@{n}",
                                                  equation=f"diff({electron_current_eq}, {v}@{n})")
-    hole_current_eq = "-ElectronCharge * EdgeHoleMobility * ThermalVoltage * EdgeInverseLength * (Holes@n1 * Bernoulli_vdiff - Holes@n0 * Bernoulli_neg_vdiff)"
+    hole_current_eq = "ElectronCharge * EdgeHoleMobility * ThermalVoltage * EdgeInverseLength * (Holes@n1 * Bernoulli_vdiff - Holes@n0 * Bernoulli_neg_vdiff)"
     devsim.edge_model(device=device_name, region=region, name="HoleCurrent", equation=hole_current_eq)
     for v in ["Potential", "Electrons", "Holes"]:
         for n in ["n0", "n1"]: devsim.edge_model(device=device_name, region=region, name=f"HoleCurrent:{v}@{n}",
                                                  equation=f"diff({hole_current_eq}, {v}@{n})")
-    devsim.edge_model(device=device_name, region=region, name="NegHoleCurrent", equation="-HoleCurrent")
-    for v in ["Potential", "Electrons", "Holes"]:
-        for n in ["n0", "n1"]: devsim.edge_model(device=device_name, region=region, name=f"NegHoleCurrent:{v}@{n}",
-                                                 equation=f"-HoleCurrent:{v}@{n}")
+
     devsim.node_model(device=device_name, region=region, name="n_i_squared", equation="IntrinsicCarrierDensity^2")
     devsim.node_model(device=device_name, region=region, name="IntrinsicElectrons",
                       equation="0.5*(NetDoping+(NetDoping^2+4*n_i_squared)^0.5)")
@@ -162,13 +158,34 @@ for region in ["p_region", "n_region"]:
                       equation="0.5*(-NetDoping+(NetDoping^2+4*n_i_squared)^0.5)")
     srh_eq = "(Electrons*Holes - n_i_squared) / (taup*(Electrons + IntrinsicElectrons) + taun*(Holes + IntrinsicHoles))"
     devsim.node_model(device=device_name, region=region, name="USRH", equation=srh_eq)
+    # Use abs(y) for robustness, though (0-y) is also fine.
     devsim.node_model(device=device_name, region=region, name="OpticalGeneration",
-                      equation="PhotonFlux * alpha * exp(-alpha * (-y))")
-    devsim.node_model(device=device_name, region=region, name="NetRecombination", equation="USRH - OpticalGeneration")
+                      equation="PhotonFlux * alpha * exp(-alpha * abs(y))")
+
+    # Define the full NetRecombination equation in a single string for consistency
+    net_recombination_eq = "USRH - OpticalGeneration"
+
+    # Use the full string to define the model
+    devsim.node_model(device=device_name, region=region, name="NetRecombination", equation=net_recombination_eq)
+
+    # CRITICAL: Use the full string to define the derivatives
     devsim.node_model(device=device_name, region=region, name="NetRecombination:Electrons",
-                      equation=f"diff({srh_eq}, Electrons)")
+                      equation=f"diff({net_recombination_eq}, Electrons)")
     devsim.node_model(device=device_name, region=region, name="NetRecombination:Holes",
-                      equation=f"diff({srh_eq}, Holes)")
+                      equation=f"diff({net_recombination_eq}, Holes)")
+    devsim.node_model(device=device_name, region=region, name="eCharge_x_NetRecomb",
+                      equation="ElectronCharge * NetRecombination")
+    devsim.node_model(device=device_name, region=region, name="eCharge_x_NetRecomb:Electrons",
+                      equation="ElectronCharge * NetRecombination:Electrons")
+    devsim.node_model(device=device_name, region=region, name="eCharge_x_NetRecomb:Holes",
+                      equation="ElectronCharge * NetRecombination:Holes")
+
+    devsim.node_model(device=device_name, region=region, name="Neg_eCharge_x_NetRecomb",
+                      equation="-ElectronCharge * NetRecombination")
+    devsim.node_model(device=device_name, region=region, name="Neg_eCharge_x_NetRecomb:Electrons",
+                      equation="-ElectronCharge * NetRecombination:Electrons")
+    devsim.node_model(device=device_name, region=region, name="Neg_eCharge_x_NetRecomb:Holes",
+                      equation="-ElectronCharge * NetRecombination:Holes")
 
 # --- Part C: Define ALL Boundary Condition Models ---
 print("  3C: Defining all boundary condition models...")
@@ -210,6 +227,7 @@ print("    Step 1/2: Assembling and solving for Potential only...")
 for region in ["p_region", "n_region"]:
     devsim.equation(device=device_name, region=region, name="PotentialEquation",
                     variable_name="Potential",
+                    node_model="SpaceCharge",  # <-- THIS IS THE CRITICAL FIX
                     edge_model="DField",
                     variable_update="log_damp")
 
@@ -237,15 +255,20 @@ for region in ["p_region", "n_region"]:
 print("    Step 2/2: Assembling continuity equations and solving the full system...")
 # SECOND: Setup continuity equations in regions
 for region in ["p_region", "n_region"]:
+    # For d(n)/dt: div(Jn) = q(R-G). DEVSIM solves div(F) - S = 0.
+    # So F=Jn and S = q(R-G), which is our "eCharge_x_NetRecomb"
     devsim.equation(device=device_name, region=region, name="ElectronContinuityEquation",
                     variable_name="Electrons",
-                    node_model="NetRecombination",
+                    node_model="eCharge_x_NetRecomb",
                     edge_model="ElectronCurrent",
                     variable_update="log_damp")
+
+    # For d(p)/dt: div(Jp) = -q(R-G). DEVSIM solves div(F) - S = 0.
+    # So F=Jp and S = -q(R-G), which is our "Neg_eCharge_x_NetRecomb"
     devsim.equation(device=device_name, region=region, name="HoleContinuityEquation",
                     variable_name="Holes",
-                    node_model="NetRecombination",
-                    edge_model="NegHoleCurrent",
+                    node_model="Neg_eCharge_x_NetRecomb",
+                    edge_model="HoleCurrent",
                     variable_update="log_damp")
 
 # Setup interface equations for continuity
@@ -266,15 +289,15 @@ for contact in ["anode", "cathode"]:
                             node_model=f"{contact}_holes_bc",
                             edge_current_model="HoleCurrent")
 
-print("\n--- Final Solve: Using a Ramping Strategy for Stability ---")
-target_lifetime = 1e-3
-ramp_lifetimes = [1e-8, 1e-7, 1e-6, 1e-5, 1e-4, target_lifetime]
-for i, life in enumerate(ramp_lifetimes):
-    print(f"Ramp Step {i + 1}/{len(ramp_lifetimes)}: Solving with taun/taup = {life:.1e} s")
-    devsim.set_parameter(name="taun", value=life)
-    devsim.set_parameter(name="taup", value=life)
-    relative_tolerance = 1e-9 if life != target_lifetime else 1e-9
-    devsim.solve(type="dc", absolute_error=5.0, relative_error=relative_tolerance, maximum_iterations=200)
+# print("\n--- Final Solve: Using a Ramping Strategy for Stability ---")
+# target_lifetime = 1e-6
+# ramp_lifetimes = [1e-10, 1e-9, 1e-8, 1e-7, target_lifetime]
+# for i, life in enumerate(ramp_lifetimes):
+#     print(f"Ramp Step {i + 1}/{len(ramp_lifetimes)}: Solving with taun/taup = {life:.1e} s")
+#     devsim.set_parameter(name="taun", value=life)
+#     devsim.set_parameter(name="taup", value=life)
+#     relative_tolerance = 1e-9 if life != target_lifetime else 1e-9
+#     devsim.solve(type="dc", absolute_error=5.0, relative_error=relative_tolerance, maximum_iterations=200)
 
 print("\n✅ Step 3 complete: Full photodiode model is defined and solved for equilibrium.")
 
@@ -287,12 +310,15 @@ print("\n✅ Step 3 complete: Full photodiode model is defined and solved for eq
 def run_iv_sweep(device, voltages, p_flux):
     currents = []
     devsim.set_parameter(name="PhotonFlux", value=p_flux)
+    if p_flux>0:
+        print(f"DEBUG: PhotonFlux set to {devsim.get_parameter(name='PhotonFlux')}")  # Add this line
+
     for v in voltages:
         print(f"\nSetting Anode Bias: {v:.3f} V")
         devsim.set_parameter(device=device, name="anode_bias", value=v)
         try:
             # Add maximum_divergence and increase maximum_iterations
-            devsim.solve(type="dc", absolute_error=1e10, relative_error=1e-9,
+            devsim.solve(type="dc", absolute_error=1e10, relative_error=10,
                          maximum_iterations=400,  # Increased from 300
                          maximum_divergence=10)  # New parameter
             e_current = devsim.get_contact_current(device=device, contact="anode",
@@ -428,9 +454,9 @@ if __name__ == "__main__":
     print("\n--- STEP 4: Running I-V Sweeps ---")
 
     # Using adaptive voltage stepping for better convergence at high bias
-    initial_small_steps = np.linspace(0, -0.5, 26)  # 25 steps of -0.02 V
+    initial_small_steps = np.linspace(0.0, -0.5, 30)  # 25 steps of -0.02 V
     medium_steps = np.linspace(-0.6, -2.0, 15)  # 14 steps of -0.1 V
-    large_steps = np.linspace(-2.2, -4.0, 12)  # 11 steps of -0.2 V and one -0.3V
+    large_steps = np.linspace(-2.2, -5.0, 12)  # 11 steps of -0.2 V and one -0.3V
     iv_voltages = np.unique(np.concatenate([initial_small_steps, medium_steps, large_steps]))
     iv_voltages = iv_voltages[::-1]
     print("iv_voltages:",iv_voltages)
@@ -440,9 +466,23 @@ if __name__ == "__main__":
     dark_currents = run_iv_sweep(device_name, iv_voltages, p_flux=0.0)
     print("  4A Done !!")
 
-    print("  4B: Running Photocurrent Simulation (Task 2)")
+    print("\n--- Ramping up Photon Flux at initial reverse bias for stability ---")
+
+
+    devsim.set_parameter(device=device_name, name="anode_bias", value=iv_voltages[-1])  # Set bias to -5V
+    devsim.solve(type="dc", absolute_error=1e10, relative_error=10)
+
+    # Now ramp the flux at this reverse bias point
+    flux_ramp = np.logspace(12, np.log10(LIGHT_PHOTON_FLUX), 6)
+    for i, flux in enumerate(flux_ramp):
+        devsim.set_parameter(name="PhotonFlux", value=flux)
+        print(f"    Ramp Step {i + 1}/{len(flux_ramp)}: PhotonFlux = {flux:.1e} @ V = {iv_voltages[-1]:.1f}V")
+        devsim.solve(type="dc", absolute_error=1e10, relative_error=10, maximum_iterations=100)
+
+    print("\n--- Running Photocurrent Simulation (Task 2) ---")
     light_currents = run_iv_sweep(device_name, iv_voltages, p_flux=LIGHT_PHOTON_FLUX)
     print("  4B Done !!")
+
 
 
     # --- Step 5: Post-Process for Quantum Efficiency (Task 4) ---
@@ -465,30 +505,45 @@ if __name__ == "__main__":
     print(f"Light currents being used for QE (first 5 values): {light_currents[:5]}")
     print(f"Dark currents being used for QE (first 5 values): {dark_currents[:5]}")
     print(f"Resulting QE values to be plotted (first 5 values): {qe_values[:5]}")
+    print("\n Max dif max(abs(Dark- light ))):",max(dark_currents-light_currents, key=abs) )
 
-    plt.style.use('seaborn-v0_8-whitegrid')
+    import plotly.graph_objects as go
+    from plotly.subplots import make_subplots
 
-    # Plot 1: I-V Curves
-    plt.figure(1, figsize=(10, 6))
-    plt.semilogy(iv_voltages, np.abs(dark_currents), 'r-o', label='Dark Current')
-    plt.semilogy(iv_voltages, np.abs(light_currents), 'b-s', label='Photocurrent')
-    plt.xlabel("Anode Voltage (V)"), plt.ylabel("Current Magnitude (A/cm)"), plt.title("I-V Characteristics")
-    plt.legend(), plt.grid(True, which="both", ls="--"), plt.show()
+    # --- Interactive I-V Plot ---
+    fig_iv = go.Figure()
+    fig_iv.add_trace(go.Scatter(x=iv_voltages, y=np.abs(dark_currents), mode='lines+markers', name='Dark Current',
+                                marker_color='red'))
+    fig_iv.add_trace(go.Scatter(x=iv_voltages, y=np.abs(light_currents), mode='lines+markers', name='Photocurrent',
+                                marker_color='blue'))
+    fig_iv.update_layout(title_text="I-V Characteristics (Interactive)",
+                         xaxis_title="Anode Voltage (V)",
+                         yaxis_title="Current Magnitude (A/cm)",
+                         yaxis_type="log")
+    fig_iv.show()
 
-    # Plot 2: Quantum Efficiency
-    plt.figure(2, figsize=(10, 6))
-    plt.plot(iv_voltages, qe_values, 'g-^', label='QE')
-    plt.xlabel("Anode Voltage (V)"), plt.ylabel("External Quantum Efficiency (%)"), plt.title(
-        f"QE @ {WAVELENGTH_NM} nm")
-    plt.legend(), plt.grid(True), plt.ylim(bottom=0), plt.show()
+    # --- Interactive QE Plot ---
+    fig_qe = go.Figure()
+    fig_qe.add_trace(go.Scatter(x=iv_voltages, y=qe_values, mode='lines+markers', name='QE', marker_color='green'))
+    fig_qe.update_layout(title_text=f"QE @ {WAVELENGTH_NM} nm (Interactive)",
+                         xaxis_title="Anode Voltage (V)",
+                         yaxis_title="External Quantum Efficiency (%)",
+                         yaxis_range=[0, 105])  # Set a clean y-axis range
+    fig_qe.show()
 
-    # Plot 3: C-V and Mott-Schottky
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(16, 6))
+    # --- Interactive C-V and Mott-Schottky Plot ---
+    fig_cv = make_subplots(rows=1, cols=2, subplot_titles=("C-V @ 1 MHz", "Mott-Schottky Plot"))
     valid_cv_indices = ~np.isnan(capacitances)
-    ax1.plot(cv_voltages[valid_cv_indices], capacitances[valid_cv_indices] * 1e12, 'm-d')
-    ax1.set_xlabel("Anode Voltage (V)"), ax1.set_ylabel("Capacitance (pF/cm)"), ax1.set_title("C-V @ 1 MHz")
-    ax1.grid(True)
     inv_C_squared = 1.0 / (capacitances ** 2)
-    ax2.plot(cv_voltages[valid_cv_indices], inv_C_squared[valid_cv_indices], 'c-p')
-    ax2.set_xlabel("Anode Voltage (V)"), ax2.set_ylabel("1/C² (F⁻²cm²)"), ax2.set_title("Mott-Schottky Plot")
-    ax2.grid(True), plt.tight_layout(), plt.show()
+
+    fig_cv.add_trace(go.Scatter(x=cv_voltages[valid_cv_indices], y=capacitances[valid_cv_indices] * 1e12,
+                                mode='lines+markers', name='Capacitance', marker_color='magenta'), row=1, col=1)
+    fig_cv.add_trace(go.Scatter(x=cv_voltages[valid_cv_indices], y=inv_C_squared[valid_cv_indices],
+                                mode='lines+markers', name='1/C²', marker_color='darkturquoise'), row=1, col=2)
+
+    fig_cv.update_xaxes(title_text="Anode Voltage (V)", row=1, col=1)
+    fig_cv.update_yaxes(title_text="Capacitance (pF/cm)", row=1, col=1)
+    fig_cv.update_xaxes(title_text="Anode Voltage (V)", row=1, col=2)
+    fig_cv.update_yaxes(title_text="1/C² (F⁻²cm²)", row=1, col=2)
+    fig_cv.update_layout(title_text="Capacitance Analysis (Interactive)", showlegend=False)
+    fig_cv.show()

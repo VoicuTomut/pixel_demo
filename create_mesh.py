@@ -1,5 +1,5 @@
 # create_mesh.py
-# Corrected mesh generation script with improved mesh parameters
+# Mesh generation script for front-side illuminated (FSI) pixel photodiode
 
 import gmsh
 import os
@@ -7,21 +7,20 @@ import sys
 
 # --- Simulation Parameters ---
 # All dimensions are in micrometers (um).
-WIDTH = 5.0  # Total width of the device
-DEPTH = 5.0   # Total depth of the device
+WIDTH = 5.0   # Pixel width (um)
+DEPTH = 5.0   # Pixel depth (um)
 
-P_WIDTH = 4.0 # Width of the p-region
-P_DEPTH = 1.0 # Depth of the p-region
+P_WIDTH = 4.0   # Width of the p+ region (contact implant)
+P_DEPTH = 0.05  # Depth of the p+ region = 50 nm (shallow implant)
 
 # --- Gap Parameter ---
 # Defines the size of the insulating gap between the contact and junction.
-GAP_SIZE = 0.1 # um
+GAP_SIZE = 0.05  # 50 nm gap, prevents full-metal coverage
 
-# --- IMPROVED: Smart Mesh Density ---
-# FIXED: Better mesh parameters as recommended
-MESH_FINE = 0.02     # 20nm for junction area (was 0.005)
-MESH_CONTACT = 0.05  # 50nm for contacts (was 0.02)
-MESH_COARSE = 0.1    # 100nm for bulk regions (was 0.3)
+# --- Mesh Density ---
+MESH_FINE = 0.01     # 10 nm near junction
+MESH_CONTACT = 0.05  # 50 nm near contacts
+MESH_COARSE = 0.2    # 200 nm in bulk
 
 # --- Output Directory and File ---
 OUTPUT_DIR = "output"
@@ -31,114 +30,86 @@ MESH_FILE = os.path.join(OUTPUT_DIR, "photodiode_mesh.msh")
 #                      GMSH SCRIPT
 # ==============================================================================
 
-# Initialize Gmsh
 gmsh.initialize(sys.argv)
 gmsh.model.add("photodiode")
 
-print("Starting smart mesh generation for 2D photodiode...")
-print(f"Mesh parameters: Fine={MESH_FINE}μm, Contact={MESH_CONTACT}μm, Coarse={MESH_COARSE}μm")
+print("Starting mesh generation for FSI photodiode...")
+print(f"Mesh params: Fine={MESH_FINE}µm, Contact={MESH_CONTACT}µm, Coarse={MESH_COARSE}µm")
 
 # --- 1. Define Geometry Points ---
-# We now assign mesh sizes on a per-point basis. Gmsh will automatically
-# create a graded mesh that transitions between the different sizes.
+# Outer corners
+p1 = gmsh.model.geo.addPoint(0, 0, 0, MESH_COARSE)
+p4 = gmsh.model.geo.addPoint(WIDTH, 0, 0, MESH_COARSE)
+p7 = gmsh.model.geo.addPoint(0, -DEPTH, 0, MESH_CONTACT)
+p8 = gmsh.model.geo.addPoint(WIDTH, -DEPTH, 0, MESH_CONTACT)
 
-# Coarse points for the non-contact corners
-p1 = gmsh.model.geo.addPoint(0,         0,         0, MESH_COARSE)
-p4 = gmsh.model.geo.addPoint(WIDTH,     0,         0, MESH_COARSE)
-
-# Points for the cathode contact
-p7 = gmsh.model.geo.addPoint(0,         -DEPTH,    0, MESH_CONTACT)
-p8 = gmsh.model.geo.addPoint(WIDTH,     -DEPTH,    0, MESH_CONTACT)
-
-# Fine points defining the p-n junction and active area
+# P+ region (shallow junction)
 p_x_start = (WIDTH - P_WIDTH) / 2.0
-p_x_end = p_x_start + P_WIDTH
-p2 = gmsh.model.geo.addPoint(p_x_start, 0,         0, MESH_FINE)
-p3 = gmsh.model.geo.addPoint(p_x_end,   0,         0, MESH_FINE)
-p5 = gmsh.model.geo.addPoint(p_x_start, -P_DEPTH,  0, MESH_FINE)
-p6 = gmsh.model.geo.addPoint(p_x_end,   -P_DEPTH,  0, MESH_FINE)
+p_x_end   = p_x_start + P_WIDTH
+p2 = gmsh.model.geo.addPoint(p_x_start, 0, 0, MESH_FINE)
+p3 = gmsh.model.geo.addPoint(p_x_end,   0, 0, MESH_FINE)
+p5 = gmsh.model.geo.addPoint(p_x_start, -P_DEPTH, 0, MESH_FINE)
+p6 = gmsh.model.geo.addPoint(p_x_end,   -P_DEPTH, 0, MESH_FINE)
 
-# Fine points for the anode gaps
+# Anode contact (with small insulating gaps)
 p_anode_start = gmsh.model.geo.addPoint(p_x_start + GAP_SIZE, 0, 0, MESH_FINE)
-p_anode_end   = gmsh.model.geo.addPoint(p_x_end - GAP_SIZE,   0, 0, MESH_FINE)
+p_anode_end   = gmsh.model.geo.addPoint(p_x_end   - GAP_SIZE, 0, 0, MESH_FINE)
 
-print(f"Defined 10 geometric points with adaptive mesh sizing")
+print("Defined geometry points with shallow p+ implant.")
 
-# --- 2. Define Lines from Points ---
-# The top surface is now broken into 5 segments
-l_top_left = gmsh.model.geo.addLine(p1, p2)
-l_gap1 = gmsh.model.geo.addLine(p2, p_anode_start) # Left gap
-l_anode = gmsh.model.geo.addLine(p_anode_start, p_anode_end) # Anode contact
-l_gap2 = gmsh.model.geo.addLine(p_anode_end, p3) # Right gap
-l_top_right = gmsh.model.geo.addLine(p3, p4)
+# --- 2. Define Lines ---
+l_top_left   = gmsh.model.geo.addLine(p1, p2)
+l_gap1       = gmsh.model.geo.addLine(p2, p_anode_start)
+l_anode      = gmsh.model.geo.addLine(p_anode_start, p_anode_end)
+l_gap2       = gmsh.model.geo.addLine(p_anode_end, p3)
+l_top_right  = gmsh.model.geo.addLine(p3, p4)
 
-# Other device boundaries
 l_right_wall = gmsh.model.geo.addLine(p4, p8)
-l_cathode = gmsh.model.geo.addLine(p8, p7)
-l_left_wall = gmsh.model.geo.addLine(p7, p1)
+l_cathode    = gmsh.model.geo.addLine(p8, p7)
+l_left_wall  = gmsh.model.geo.addLine(p7, p1)
 
-# Inner p-region boundary lines
-l_p_right = gmsh.model.geo.addLine(p3, p6)
+# P+ region boundaries
+l_p_right  = gmsh.model.geo.addLine(p3, p6)
 l_p_bottom = gmsh.model.geo.addLine(p6, p5)
-l_p_left = gmsh.model.geo.addLine(p5, p2)
+l_p_left   = gmsh.model.geo.addLine(p5, p2)
 
-print("Defined boundary lines.")
-
-# --- 3. Define Surfaces from Lines ---
-# Create curve loops (closed paths of lines)
+# --- 3. Define Surfaces ---
 cl_outer = gmsh.model.geo.addCurveLoop([l_top_left, l_gap1, l_anode, l_gap2, l_top_right,
-                                         l_right_wall, l_cathode, l_left_wall])
+                                        l_right_wall, l_cathode, l_left_wall])
 cl_p_region = gmsh.model.geo.addCurveLoop([l_gap1, l_anode, l_gap2, l_p_right,
                                            l_p_bottom, l_p_left])
 
-# Create plane surfaces from the curve loops.
 s_n_region = gmsh.model.geo.addPlaneSurface([cl_outer, cl_p_region])
 s_p_region = gmsh.model.geo.addPlaneSurface([cl_p_region])
 
-print("Defined p-region and n-region surfaces.")
-
-# Synchronize the CAD model before defining physical groups
 gmsh.model.geo.synchronize()
 
-# --- 4. Define Physical Groups ---
-# Physical Surfaces (2D entities)
+# --- 4. Physical Groups ---
 gmsh.model.addPhysicalGroup(2, [s_p_region], name="p_region")
 gmsh.model.addPhysicalGroup(2, [s_n_region], name="n_region")
+gmsh.model.addPhysicalGroup(1, [l_anode],    name="anode")
+gmsh.model.addPhysicalGroup(1, [l_cathode],  name="cathode")
+gmsh.model.addPhysicalGroup(1, [l_p_right, l_p_bottom, l_p_left], name="pn_junction")
 
-# Physical Lines (1D entities)
-gmsh.model.addPhysicalGroup(1, [l_anode], name="anode")
-gmsh.model.addPhysicalGroup(1, [l_cathode], name="cathode")
+print("Assigned physical groups (p, n, anode, cathode, junction).")
 
-# The pn_junction remains the sides and bottom of the p-region.
-pn_junction_lines = [l_p_right, l_p_bottom, l_p_left]
-gmsh.model.addPhysicalGroup(1, pn_junction_lines, name="pn_junction")
-
-print("Assigned physical groups.")
-
-# --- 5. Generate and Save Mesh ---
+# --- 5. Mesh Generation ---
 gmsh.option.setNumber("Mesh.MshFileVersion", 2.2)
-gmsh.option.setNumber("Mesh.Algorithm", 6) # 6 = Frontal-Delaunay
+gmsh.option.setNumber("Mesh.Algorithm", 6) # Frontal-Delaunay
 gmsh.option.setNumber("Mesh.Optimize", 1)
 
-# Generate 2D mesh
 gmsh.model.mesh.generate(2)
-print("2D smart mesh generated successfully.")
 
-# Report mesh statistics
+# Report
 _, node_tags, _ = gmsh.model.mesh.getNodes()
 element_types, element_tags, _ = gmsh.model.mesh.getElements()
 num_elements = sum(len(tags) for tags in element_tags)
-print(f"Mesh statistics: {len(node_tags)} nodes, {num_elements} elements")
+print(f"Mesh stats: {len(node_tags)} nodes, {num_elements} elements")
 
-# Create output directory if it doesn't exist
+# Save mesh
 if not os.path.exists(OUTPUT_DIR):
     os.makedirs(OUTPUT_DIR)
-    print(f"Created output directory: {OUTPUT_DIR}")
-
-# Save mesh file
 gmsh.write(MESH_FILE)
-print(f"Mesh file saved to: {MESH_FILE}")
 
-# Finalize Gmsh
 gmsh.finalize()
-print("✅ Mesh generation complete!")
+print(f"✅ Mesh saved to {MESH_FILE}")
