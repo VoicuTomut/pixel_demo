@@ -399,7 +399,7 @@ if __name__ == "__main__":
     iv_voltages = iv_voltages[::-1]
     print("iv_voltages:",iv_voltages)
 
-    LIGHT_PHOTON_FLUX = 1e17
+    LIGHT_PHOTON_FLUX = 1e15
     print("  4A: Running Dark Current Simulation (Task 1)")
     dark_currents = run_iv_sweep(device_name, iv_voltages, p_flux=0.0)
     print("  4A Done !!")
@@ -411,7 +411,7 @@ if __name__ == "__main__":
 
     # --- Step 5: Post-Process for Quantum Efficiency (Task 4) ---
     print("\n--- STEP 5: Calculating Quantum Efficiency ---")
-    DEVICE_WIDTH_CM = 50e-4
+    DEVICE_WIDTH_CM = 4.0e-4
     WAVELENGTH_NM = 650
     qe_values = calculate_qe(dark_currents, light_currents, LIGHT_PHOTON_FLUX, DEVICE_WIDTH_CM, WAVELENGTH_NM)
 
@@ -423,6 +423,13 @@ if __name__ == "__main__":
 
     # --- Step 7: Visualize All Results ---
     print("\n--- STEP 7: Generating Plots ---")
+
+    # --- ADD THIS DEBUGGING BLOCK ---
+    print("\n--- DEBUGGING QE DATA ---")
+    print(f"Light currents being used for QE (first 5 values): {light_currents[:5]}")
+    print(f"Dark currents being used for QE (first 5 values): {dark_currents[:5]}")
+    print(f"Resulting QE values to be plotted (first 5 values): {qe_values[:5]}")
+
     plt.style.use('seaborn-v0_8-whitegrid')
 
     # Plot 1: I-V Curves
