@@ -7,7 +7,7 @@ import sys
 
 # --- Simulation Parameters ---
 # All dimensions are in micrometers (um).
-WIDTH = 10.0  # Total width of the device
+WIDTH = 5.0  # Total width of the device
 DEPTH = 5.0   # Total depth of the device
 
 P_WIDTH = 4.0 # Width of the p-region

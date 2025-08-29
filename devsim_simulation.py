@@ -163,7 +163,7 @@ for region in ["p_region", "n_region"]:
     srh_eq = "(Electrons*Holes - n_i_squared) / (taup*(Electrons + IntrinsicElectrons) + taun*(Holes + IntrinsicHoles))"
     devsim.node_model(device=device_name, region=region, name="USRH", equation=srh_eq)
     devsim.node_model(device=device_name, region=region, name="OpticalGeneration",
-                      equation="PhotonFlux * alpha * exp(-alpha * y)")
+                      equation="PhotonFlux * alpha * exp(-alpha * (-y))")
     devsim.node_model(device=device_name, region=region, name="NetRecombination", equation="USRH - OpticalGeneration")
     devsim.node_model(device=device_name, region=region, name="NetRecombination:Electrons",
                       equation=f"diff({srh_eq}, Electrons)")
@@ -267,8 +267,8 @@ for contact in ["anode", "cathode"]:
                             edge_current_model="HoleCurrent")
 
 print("\n--- Final Solve: Using a Ramping Strategy for Stability ---")
-target_lifetime = 1e-7
-ramp_lifetimes = [1e-13, 1e-12, 1e-11, 1e-10, 1e-9, 1e-8, target_lifetime]
+target_lifetime = 1e-3
+ramp_lifetimes = [1e-8, 1e-7, 1e-6, 1e-5, 1e-4, target_lifetime]
 for i, life in enumerate(ramp_lifetimes):
     print(f"Ramp Step {i + 1}/{len(ramp_lifetimes)}: Solving with taun/taup = {life:.1e} s")
     devsim.set_parameter(name="taun", value=life)
@@ -328,17 +328,10 @@ def calculate_qe(dark_currents, light_currents, p_flux, device_width_cm, wavelen
     # Physical constants
     q = 1.602e-19  # Elementary charge in Coulombs
 
-    # 1. Calculate the photocurrent density by subtracting the dark current
-    photocurrent_density = np.abs(light_currents - dark_currents)  # Result is in A/cm
-
-    # 2. Convert photocurrent density to the rate of electrons collected per cm of width
-    electrons_per_sec_per_cm = photocurrent_density / q  # Result is in (electrons/s)/cm
-
-    # 3. Calculate the rate of photons incident on the top surface per cm of width
-    photons_per_sec_per_cm = p_flux * device_width_cm  # (photons/cm²/s) * cm = (photons/s)/cm
-
-    # 4. Calculate QE. The per-cm units cancel out.
-    qe = (electrons_per_sec_per_cm / photons_per_sec_per_cm) * 100.0
+    photocurrent_density = np.abs(light_currents - dark_currents)  # A/cm²
+    electrons_per_sec_per_cm2 = photocurrent_density / q  # (e-/s)/cm²
+    photons_per_sec_per_cm2 = p_flux  # (photons/s)/cm²
+    qe = (electrons_per_sec_per_cm2 / photons_per_sec_per_cm2) * 100.0
 
     return qe
 
