@@ -373,7 +373,7 @@ def run_cv_sweep(device, voltages, freq_hz):
 
     # Initial solve at starting voltage
     devsim.set_parameter(device=device, name="anode_bias", value=voltages[0])
-    devsim.solve(type="dc", absolute_error=10.0, relative_error=1e-9, maximum_iterations=100)
+    devsim.solve(type="dc", absolute_error=10.0, relative_error=1e-2, maximum_iterations=100)
 
     for i, v in enumerate(voltages):
         print(f"Step {i + 1}/{len(voltages)}: Bias = {v:.2f} V")
@@ -381,12 +381,12 @@ def run_cv_sweep(device, voltages, freq_hz):
         try:
             # Solve at V - DELTA_V/2
             devsim.set_parameter(device=device, name="anode_bias", value=v - DELTA_V / 2.0)
-            devsim.solve(type="dc", absolute_error=10.0, relative_error=1e-9, maximum_iterations=100)
+            devsim.solve(type="dc", absolute_error=10.0, relative_error=1e-2, maximum_iterations=100)
             q1 = devsim.get_contact_charge(device=device, contact="anode", equation="PotentialEquation")
 
             # Solve at V + DELTA_V/2
             devsim.set_parameter(device=device, name="anode_bias", value=v + DELTA_V / 2.0)
-            devsim.solve(type="dc", absolute_error=10.0, relative_error=1e-9, maximum_iterations=100)
+            devsim.solve(type="dc", absolute_error=10.0, relative_error=1e-2, maximum_iterations=100)
             q2 = devsim.get_contact_charge(device=device, contact="anode", equation="PotentialEquation")
 
             # Calculate capacitance
@@ -421,7 +421,7 @@ def run_cv_sweep_ac(device, voltages, freq_hz):
         try:
             # FIX 1: Use TIGHT tolerances to get a physically correct DC solution.
             # This is the key to fixing the linear shape problem.
-            devsim.solve(type="dc", absolute_error=100.0, relative_error=1e-2, maximum_iterations=100)
+            devsim.solve(type="dc", absolute_error=100.0, relative_error=3e-2, maximum_iterations=200)
 
             # Perform the small-signal AC analysis at this correct DC point.
             devsim.solve(type="ac", frequency=freq_hz)
@@ -433,9 +433,8 @@ def run_cv_sweep_ac(device, voltages, freq_hz):
             imag_i_h = devsim.get_contact_current(device=device, contact="anode",
                                                   equation="HoleContinuityEquation")
 
-            # FIX 3: Apply a negative sign to correct for the simulator's current
-            # direction convention and ensure capacitance is positive, as required by physics.
-            C = -(imag_i_e + imag_i_h) / omega
+
+            C = (imag_i_e + imag_i_h) / omega
             capacitances.append(C)
             print(f"  ✅ C = {C * 1e12:.4f} pF/cm")
 
@@ -495,7 +494,7 @@ if __name__ == "__main__":
     print("\n--- STEP 6: Running C-V Simulation ---")
     cv_voltages = np.linspace(0, -5, 21)
 
-    capacitances = run_cv_sweep_ac(device_name, cv_voltages, freq_hz=1e6)
+    capacitances = run_cv_sweep(device_name, cv_voltages, freq_hz=1e6)
 
     # --- Step 7: Visualize All Results ---
     print("\n--- STEP 7: Generating Plots ---")
