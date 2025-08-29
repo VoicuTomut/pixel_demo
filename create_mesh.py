@@ -26,9 +26,9 @@ GAP_SIZE = 0.1 # um
 
 # --- NEW: Smart Mesh Density ---
 # Use a fine mesh near the junction and a coarse mesh elsewhere.
-MESH_FINE = 0.005    # Finer mesh size for the active junction area
+MESH_FINE = 0.02    # Finer mesh size for the active junction area
 MESH_CONTACT = 0.02  # A specific, medium mesh size for the contacts
-MESH_COARSE = 0.3   # Coarser mesh size for non-critical corners
+MESH_COARSE = 0.1   # Coarser mesh size for non-critical corners
 
 # --- Output Directory and File ---
 OUTPUT_DIR = "output"

@@ -9,7 +9,7 @@ import os
 # ==============================================================================
 # --- Device and File Names ---
 device_name = "photodiode"
-mesh_file = "output/photodiode_mesh.msh"
+mesh_file = "output/photodiode_mesh_old.msh"
 
 # --- Photodiode Simulation Parameters ---
 # Set photon_flux to 0.0 for a simulation in the dark.
