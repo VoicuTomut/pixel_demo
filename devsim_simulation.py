@@ -112,9 +112,25 @@ def set_silicon_parameters(device, region):
     devsim.set_parameter(device=device, region=region, name="Permittivity", value=11.9 * 8.854e-14)
     devsim.set_parameter(device=device, region=region, name="IntrinsicCarrierDensity", value=1.0e10)
     devsim.set_parameter(device=device, region=region, name="ElectronCharge", value=1.6e-19)
-    devsim.set_parameter(device=device, region=region, name="taun", value=1.0e-6)
-    devsim.set_parameter(device=device, region=region, name="taup", value=1.0e-6)
 
+def define_srh_lifetime_models(device, region):
+    """
+    Defines doping-dependent SRH lifetimes using the Klaassen model.
+    Lifetime decreases in heavily doped regions.
+    """
+    # Parameters for the doping-dependent lifetime model
+    # tau_max: lifetime in intrinsic material
+    # N_ref: reference doping concentration where lifetime starts to degrade
+    tau_max_n, N_ref_n = 1.0e-6, 5.0e16
+    tau_max_p, N_ref_p = 1.0e-6, 5.0e16
+
+    # Equation for electron lifetime (taun)
+    eqn_n = f"{tau_max_n} / (1 + TotalDoping / {N_ref_n})"
+    devsim.node_model(device=device, region=region, name="taun", equation=eqn_n)
+
+    # Equation for hole lifetime (taup)
+    eqn_p = f"{tau_max_p} / (1 + TotalDoping / {N_ref_p})"
+    devsim.node_model(device=device, region=region, name="taup", equation=eqn_p)
 
 def define_doping(device, p_peak, j_depth_cm, p_straggle_cm, n_bulk):
     """
@@ -162,6 +178,11 @@ define_doping(device=device,
 print("Defining doping-dependent mobility models...")
 define_mobility_models(device=device, region="p_region")
 define_mobility_models(device=device, region="n_region")
+
+print("Defining doping-dependent SRH lifetime models...")
+define_srh_lifetime_models(device=device, region="p_region")
+define_srh_lifetime_models(device=device, region="n_region")
+
 print("\n--- Step 2 complete: Physics and doping defined ---")
 
 # ==============================================================================
