@@ -19,6 +19,13 @@ mesh_file = "output/photodiode_mesh.msh"
 photon_flux = 0.0  # Units: photons/cm^2/s
 # Absorption coefficient for a given wavelength.
 alpha = 1e4  # Units: 1/cm
+# Peak concentration of the p-type implant at the surface
+peak_p_doping = 5e17  # Units: 1/cm^3
+# The depth of the peak of the Gaussian profile (Projected Range, Rp)
+junction_depth = 0.5  # Units: um
+# The standard deviation of the Gaussian profile (Straggle, ΔRp)
+doping_straggle = 0.1 # Units: um
+
 
 # ==============================================================================
 # STEP 1: INITIALIZATION AND MESH LOADING
@@ -373,7 +380,7 @@ def run_cv_sweep(device, voltages, freq_hz):
 
     # Initial solve at starting voltage
     devsim.set_parameter(device=device, name="anode_bias", value=voltages[0])
-    devsim.solve(type="dc", absolute_error=10.0, relative_error=1e-2, maximum_iterations=100)
+    devsim.solve(type="dc", absolute_error=10.0, relative_error=1e-2, maximum_iterations=200)
 
     for i, v in enumerate(voltages):
         print(f"Step {i + 1}/{len(voltages)}: Bias = {v:.2f} V")
@@ -381,7 +388,7 @@ def run_cv_sweep(device, voltages, freq_hz):
         try:
             # Solve at V - DELTA_V/2
             devsim.set_parameter(device=device, name="anode_bias", value=v - DELTA_V / 2.0)
-            devsim.solve(type="dc", absolute_error=10.0, relative_error=1e-2, maximum_iterations=100)
+            devsim.solve(type="dc", absolute_error=10.0, relative_error=1e-2, maximum_iterations=200)
             q1 = devsim.get_contact_charge(device=device, contact="anode", equation="PotentialEquation")
 
             # Solve at V + DELTA_V/2
@@ -494,7 +501,7 @@ if __name__ == "__main__":
     print("\n--- STEP 6: Running C-V Simulation ---")
     cv_voltages = np.linspace(0, -5, 21)
 
-    capacitances = run_cv_sweep(device_name, cv_voltages, freq_hz=1e6)
+    capacitances = run_cv_sweep_ac(device_name, cv_voltages, freq_hz=1e6)
 
     # --- Step 7: Visualize All Results ---
     print("\n--- STEP 7: Generating Plots ---")
