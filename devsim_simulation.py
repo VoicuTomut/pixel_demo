@@ -325,8 +325,33 @@ for region in ["p_region", "n_region"]:
                       equation="0.5*(NetDoping+(NetDoping^2+4*n_i_squared)^0.5)")
     devsim.node_model(device=device, region=region, name="IntrinsicHoles",
                       equation="0.5*(-NetDoping+(NetDoping^2+4*n_i_squared)^0.5)")
-    srh_eq = "(Electrons*Holes - n_i_squared) / (taup*(Electrons + IntrinsicCarrierDensity) + taun*(Holes + IntrinsicCarrierDensity))"
-    devsim.node_model(device=device, region=region, name="USRH", equation=srh_eq)
+
+    # --- 1. Define Explicit SRH Trap Parameters ---
+    # These are the fundamental inputs for recombination.
+    # These values are typical for silicon with mid-gap traps.
+    Nt = 1e10  # Trap density in cm^-3
+    sigma_n = 1e-15  # Electron capture cross-section in cm^2
+    sigma_p = 1e-15  # Hole capture cross-section in cm^2
+
+    # --- 2. Calculate Thermal Velocity and Lifetimes ---
+    v_th = 1e7  # Thermal velocity in cm/s at 300K
+    tau_n_srh = 1.0 / (sigma_n * v_th * Nt)
+    tau_p_srh = 1.0 / (sigma_p * v_th * Nt)
+
+    # --- 3. Implement the Full SRH Model in devsim ---
+    # For mid-gap traps, n1 = p1 = n_i
+    devsim.node_model(device=device, region=region, name="n1_srh", equation="IntrinsicCarrierDensity")
+    devsim.node_model(device=device, region=region, name="p1_srh", equation="IntrinsicCarrierDensity")
+
+    # Set the calculated lifetimes as parameters in devsim
+    devsim.set_parameter(name="tau_n_srh", value=tau_n_srh)
+    devsim.set_parameter(name="tau_p_srh", value=tau_p_srh)
+
+    # The full SRH recombination rate equation
+    srh_expression = "(Electrons * Holes - n_i_squared) / (tau_p_srh * (Electrons + n1_srh) + tau_n_srh * (Holes + p1_srh))"
+    devsim.node_model(name="USRH",device=device, region=region, equation=srh_expression)
+
+    # Also redefine the OpticalGeneration model here
     devsim.node_model(device=device, region=region, name="OpticalGeneration",
                       equation="PhotonFlux * alpha * exp(-alpha * abs(y))")
 
@@ -557,7 +582,7 @@ def run_iv_sweep(device, voltages, p_flux):
         print(f"\nSetting Anode Bias: {v:.3f} V")
         devsim.set_parameter(device=device, name="anode_bias", value=v)
         try:
-            devsim.solve(type="dc", absolute_error=1e10, relative_error=0.01,
+            devsim.solve(type="dc", absolute_error=1e10, relative_error=0.001,
                          maximum_iterations=400,
                          maximum_divergence=10)
             e_current = devsim.get_contact_current(device=device, contact="anode",
@@ -596,7 +621,7 @@ def run_cv_sweep(device, voltages, freq_hz):
     print(f"\nStarting C-V sweep...")
 
     devsim.set_parameter(device=device, name="anode_bias", value=voltages[0])
-    devsim.solve(type="dc", absolute_error=10.0, relative_error=1e-3, maximum_iterations=200)
+    devsim.solve(type="dc", absolute_error=10.0, relative_error=1e-3, maximum_iterations=300)
 
     for i, v in enumerate(voltages):
         print(f"Step {i + 1}/{len(voltages)}: Bias = {v:.2f} V")
@@ -670,92 +695,124 @@ if __name__ == "__main__":
     qe_vs_voltage = calculate_qe(dark_currents_single, light_currents_single, LIGHT_PHOTON_FLUX, device_width_cm=1.0,
                                  wavelength_nm=WAVELENGTH_NM_SINGLE)
 
-    # --- C-V Simulation ---
-    cv_voltages = np.linspace(0, -5, 21)
-    capacitances = run_cv_sweep_ac(device, cv_voltages, freq_hz=1e6)
-
-    # ==============================================================================
-    #                      RUN SPECTRAL SWEEP FOR NEW PLOT
-    # ==============================================================================
-    print("\n--- STARTING SPECTRAL SWEEP for QE vs. Wavelength plot ---")
-
-    # Check if the dark current sweep completed successfully
-    if len(dark_currents_single) != len(iv_voltages):
-        print("WARNING: I-V sweep did not complete. Truncating voltage range for interpolation.")
-        # Find the last valid index
-        valid_indices = ~np.isnan(dark_currents_single)
-        if np.any(valid_indices):
-            last_valid = np.where(valid_indices)[0][-1]
-            iv_voltages = iv_voltages[:last_valid + 1]
-            dark_currents_single = dark_currents_single[:last_valid + 1]
-            light_currents_single = light_currents_single[:last_valid + 1]
-            qe_vs_voltage = qe_vs_voltage[:last_valid + 1]
-        else:
-            print("ERROR: No valid I-V data available. Cannot proceed with spectral sweep.")
-            import sys
-
-            sys.exit(1)
-
-    np.linspace(WAVELENGTH_START_NM, WAVELENGTH_END_NM, WAVELENGTH_POINTS)
-    qe_spectral_results = []
-    QE_BIAS = -2.0
-
-    INCIDENT_PHOTON_FLUX = 1e17
-    USE_AR_COATING = True
-
-    # Now this interpolation should work
-    dark_current_at_bias = np.interp(QE_BIAS, iv_voltages, dark_currents_single)
-
-    print("\n--- ALL SIMULATIONS COMPLETE ---")
-
-    # ==============================================================================
-    #                      STEP 7: VISUALIZE ALL RESULTS
-    # ==============================================================================
-    print("\n--- STEP 7: Generating All Plots ---")
-
-    # --- PLOT 1: Original Interactive I-V Plot ---
-    fig_iv = go.Figure()
-    fig_iv.add_trace(go.Scatter(x=iv_voltages, y=np.abs(dark_currents_single), mode='lines+markers',
-                                name='Dark Current', marker_color='red'))
-    fig_iv.add_trace(go.Scatter(x=iv_voltages, y=np.abs(light_currents_single), mode='lines+markers',
-                                name=f'Photocurrent @ {WAVELENGTH_NM_SINGLE} nm', marker_color='blue'))
-    fig_iv.update_layout(title_text="I-V Characteristics (Interactive)",
-                         xaxis_title="Anode Voltage (V)",
-                         yaxis_title="Current Magnitude (A/cm)",
-                         yaxis_type="log")
-    fig_iv.show()
-
-    # --- PLOT 2: Original Interactive QE vs. Voltage Plot ---
-    fig_qe_v = go.Figure()
-    fig_qe_v.add_trace(go.Scatter(x=iv_voltages, y=qe_vs_voltage, mode='lines+markers',
-                                  name='QE', marker_color='green'))
-    fig_qe_v.update_layout(title_text=f"QE vs. Voltage @ {WAVELENGTH_NM_SINGLE} nm (Interactive)",
-                           xaxis_title="Anode Voltage (V)",
-                           yaxis_title="External Quantum Efficiency (%)",
-                           yaxis_range=[0, 105])
-    fig_qe_v.show()
-
-    # --- PLOT 3: Original Interactive C-V and Mott-Schottky Plot ---
-    fig_cv = make_subplots(rows=1, cols=2, subplot_titles=("C-V @ 1 MHz", "Mott-Schottky Plot"))
-    valid_cv_indices = ~np.isnan(capacitances)
-    inv_C_squared = 1.0 / (capacitances ** 2)
-    fig_cv.add_trace(go.Scatter(x=cv_voltages[valid_cv_indices], y=capacitances[valid_cv_indices] * 1e12,
-                                mode='lines+markers', name='Capacitance', marker_color='magenta'), row=1, col=1)
-    fig_cv.add_trace(go.Scatter(x=cv_voltages[valid_cv_indices], y=inv_C_squared[valid_cv_indices],
-                                mode='lines+markers', name='1/C²', marker_color='darkturquoise'), row=1, col=2)
-    fig_cv.update_xaxes(title_text="Anode Voltage (V)", row=1, col=1)
-    fig_cv.update_yaxes(title_text="Capacitance (pF/cm)", row=1, col=1)
-    fig_cv.update_xaxes(title_text="Anode Voltage (V)", row=1, col=2)
-    fig_cv.update_yaxes(title_text="1/C² (F⁻²cm²)", row=1, col=2)
-    fig_cv.update_layout(title_text="Capacitance Analysis (Interactive)", showlegend=False)
-    fig_cv.show()
-
-    # --- PLOT 4: NEW Interactive Spectral Response Plot ---
-    fig_spectral = go.Figure()
-    fig_spectral.add_trace(go.Scatter(x=wavelengths_nm_sweep, y=qe_spectral_results, mode='lines+markers',
-                                      name=f'QE at {QE_BIAS}V', marker_color='purple'))
-    fig_spectral.update_layout(title_text=f"Photodiode Spectral Response at V_anode = {QE_BIAS}V (Interactive)",
-                               xaxis_title="Wavelength (nm)",
-                               yaxis_title="External Quantum Efficiency (%)",
-                               yaxis_range=[0, 105])
-    fig_spectral.show()
+    # # --- C-V Simulation ---
+    # cv_voltages = np.linspace(0, -5, 21)
+    # capacitances = run_cv_sweep_ac(device, cv_voltages, freq_hz=1e6)
+    #
+    # # ==============================================================================
+    # #                      RUN SPECTRAL SWEEP FOR NEW PLOT
+    # # ==============================================================================
+    # print("\n--- STARTING SPECTRAL SWEEP for QE vs. Wavelength plot ---")
+    #
+    # # Check if the dark current sweep completed successfully
+    # if len(dark_currents_single) != len(iv_voltages):
+    #     print("WARNING: I-V sweep did not complete. Truncating voltage range for interpolation.")
+    #     # Find the last valid index
+    #     valid_indices = ~np.isnan(dark_currents_single)
+    #     if np.any(valid_indices):
+    #         last_valid = np.where(valid_indices)[0][-1]
+    #         iv_voltages = iv_voltages[:last_valid + 1]
+    #         dark_currents_single = dark_currents_single[:last_valid + 1]
+    #     else:
+    #         print("ERROR: No valid I-V data available. Cannot proceed with spectral sweep.")
+    #         import sys
+    #
+    #         sys.exit(1)
+    #
+    # # 1. Correctly define the wavelengths to sweep over
+    # wavelengths_nm_sweep = np.linspace(WAVELENGTH_START_NM, WAVELENGTH_END_NM, WAVELENGTH_POINTS)
+    # qe_spectral_results = []
+    # QE_BIAS = -2.0
+    # INCIDENT_PHOTON_FLUX = 1e17
+    # USE_AR_COATING = True
+    #
+    # # Interpolate to find the dark current at the specific bias for QE calculation
+    # dark_current_at_bias = np.interp(QE_BIAS, iv_voltages, dark_currents_single)
+    #
+    # # 2. Add the missing loop to perform the spectral sweep
+    # print(f"\nSimulating QE at a fixed bias of {QE_BIAS} V across the spectrum...")
+    # devsim.set_parameter(device=device, name="anode_bias", value=QE_BIAS)
+    #
+    # for wl in wavelengths_nm_sweep:
+    #     # Calculate optical properties for the current wavelength
+    #     alpha_val = get_alpha_for_wavelength(wl)
+    #
+    #     # Set these parameters in the devsim model
+    #     devsim.set_parameter(name="alpha", value=alpha_val)
+    #     devsim.set_parameter(name="PhotonFlux", value=INCIDENT_PHOTON_FLUX)
+    #
+    #     try:
+    #         # Solve for the light condition at this wavelength
+    #         devsim.solve(type="dc", absolute_error=1e10, relative_error=1e-2, maximum_iterations=100)
+    #
+    #         # Get the light current
+    #         e_current = devsim.get_contact_current(device=device, contact="anode",
+    #                                                equation="ElectronContinuityEquation")
+    #         h_current = devsim.get_contact_current(device=device, contact="anode", equation="HoleContinuityEquation")
+    #         light_current_at_bias = e_current + h_current
+    #
+    #         # Calculate and store the QE value
+    #         qe_val = calculate_qe(dark_current_at_bias, light_current_at_bias, INCIDENT_PHOTON_FLUX, 1.0, wl)
+    #         qe_spectral_results.append(qe_val)
+    #         print(f"  ✅ Wavelength: {wl:.1f} nm, Photocurrent: {light_current_at_bias:.3e} A/cm, QE: {qe_val:.2f}%")
+    #
+    #     except devsim.error as msg:
+    #         print(f"  ❌ CONVERGENCE FAILED at {wl:.1f} nm. Error: {msg}")
+    #         qe_spectral_results.append(float('nan'))
+    #
+    # # Reset photon flux to zero after the sweep
+    # devsim.set_parameter(name="PhotonFlux", value=0.0)
+    #
+    # print("\n--- ALL SIMULATIONS COMPLETE ---")
+    #
+    # # ==============================================================================
+    # #                      STEP 7: VISUALIZE ALL RESULTS
+    # # ==============================================================================
+    # print("\n--- STEP 7: Generating All Plots ---")
+    #
+    # # --- PLOT 1: Original Interactive I-V Plot ---
+    # fig_iv = go.Figure()
+    # fig_iv.add_trace(go.Scatter(x=iv_voltages, y=np.abs(dark_currents_single), mode='lines+markers',
+    #                             name='Dark Current', marker_color='red'))
+    # fig_iv.add_trace(go.Scatter(x=iv_voltages, y=np.abs(light_currents_single), mode='lines+markers',
+    #                             name=f'Photocurrent @ {WAVELENGTH_NM_SINGLE} nm', marker_color='blue'))
+    # fig_iv.update_layout(title_text="I-V Characteristics (Interactive)",
+    #                      xaxis_title="Anode Voltage (V)",
+    #                      yaxis_title="Current Magnitude (A/cm)",
+    #                      yaxis_type="log")
+    # fig_iv.show()
+    #
+    # # --- PLOT 2: Original Interactive QE vs. Voltage Plot ---
+    # fig_qe_v = go.Figure()
+    # fig_qe_v.add_trace(go.Scatter(x=iv_voltages, y=qe_vs_voltage, mode='lines+markers',
+    #                               name='QE', marker_color='green'))
+    # fig_qe_v.update_layout(title_text=f"QE vs. Voltage @ {WAVELENGTH_NM_SINGLE} nm (Interactive)",
+    #                        xaxis_title="Anode Voltage (V)",
+    #                        yaxis_title="External Quantum Efficiency (%)",
+    #                        yaxis_range=[0, 105])
+    # fig_qe_v.show()
+    #
+    # # --- PLOT 3: Original Interactive C-V and Mott-Schottky Plot ---
+    # fig_cv = make_subplots(rows=1, cols=2, subplot_titles=("C-V @ 1 MHz", "Mott-Schottky Plot"))
+    # valid_cv_indices = ~np.isnan(capacitances)
+    # inv_C_squared = 1.0 / (capacitances[valid_cv_indices] ** 2)
+    # fig_cv.add_trace(go.Scatter(x=cv_voltages[valid_cv_indices], y=capacitances[valid_cv_indices] * 1e12,
+    #                             mode='lines+markers', name='Capacitance', marker_color='magenta'), row=1, col=1)
+    # fig_cv.add_trace(go.Scatter(x=cv_voltages[valid_cv_indices], y=inv_C_squared,
+    #                             mode='lines+markers', name='1/C²', marker_color='darkturquoise'), row=1, col=2)
+    # fig_cv.update_xaxes(title_text="Anode Voltage (V)", row=1, col=1)
+    # fig_cv.update_yaxes(title_text="Capacitance (pF/cm)", row=1, col=1)
+    # fig_cv.update_xaxes(title_text="Anode Voltage (V)", row=1, col=2)
+    # fig_cv.update_yaxes(title_text="1/C² (F⁻²cm²)", row=1, col=2)
+    # fig_cv.update_layout(title_text="Capacitance Analysis (Interactive)", showlegend=False)
+    # fig_cv.show()
+    #
+    # # --- PLOT 4: NEW Interactive Spectral Response Plot ---
+    # fig_spectral = go.Figure()
+    # fig_spectral.add_trace(go.Scatter(x=wavelengths_nm_sweep, y=qe_spectral_results, mode='lines+markers',
+    #                                   name=f'QE at {QE_BIAS}V', marker_color='purple'))
+    # fig_spectral.update_layout(title_text=f"Photodiode Spectral Response at V_anode = {QE_BIAS}V (Interactive)",
+    #                            xaxis_title="Wavelength (nm)",
+    #                            yaxis_title="External Quantum Efficiency (%)",
+    #                            yaxis_range=[0, 105])
+    # fig_spectral.show()
