@@ -16,7 +16,7 @@ photon_flux = 0.0
 peak_p_doping = 5e17
 junction_depth = 0.5
 doping_straggle = 0.1
-TEMPERATURE_K = 300.0 
+TEMPERATURE_K = 300.0
 # CORRECTED: Use more realistic SRV values for a passivated surface
 s_n = 100.0  # Electron SRV at the top surface (cm/s)
 s_p = 100.0  # Hole SRV at the top surface (cm/s)
@@ -108,10 +108,21 @@ except devsim.error as msg:
 # STEP 2: DEFINING PHYSICS AND MATERIAL PROPERTIES
 # ==============================================================================
 def set_silicon_parameters(device, region):
-    """Sets the basic material parameters for Silicon."""
+    """Sets the basic material parameters for Silicon, including temperature dependence."""
+    # Physical constants
+    devsim.set_parameter(name="k_B_eV", value=8.617e-5)  # Boltzmann constant in eV/K
+    devsim.set_parameter(name="Eg", value=1.12)  # Silicon bandgap in eV
+    devsim.set_parameter(name="Nc_300K", value=2.8e19)  # Conduction band density of states at 300K
+
+    # Global device parameters
+    devsim.set_parameter(name="T", value=TEMPERATURE_K)  # Set temperature from global variable
     devsim.set_parameter(device=device, region=region, name="Permittivity", value=11.9 * 8.854e-14)
-    devsim.set_parameter(device=device, region=region, name="IntrinsicCarrierDensity", value=1.0e10)
     devsim.set_parameter(device=device, region=region, name="ElectronCharge", value=1.6e-19)
+
+    # Temperature-dependent Intrinsic Carrier Density Model
+    ni_model_eq = "Nc_300K * pow(T/300.0, 1.5) * exp(-Eg / (2.0 * k_B_eV * T))"
+    devsim.node_model(device=device, region=region, name="IntrinsicCarrierDensity", equation=ni_model_eq)
+
 
 def define_srh_lifetime_models(device, region):
     """
@@ -234,11 +245,18 @@ print("--- STEP 3: Setting Up Full Photodiode Physical Model ---")
 
 
 # --- Part B: Define ALL Bulk Physical Models ---
-print("  3B: Defining all bulk physical models...")
-devsim.set_parameter(name="ThermalVoltage", value=0.0259)
 devsim.set_parameter(name="PhotonFlux", value=photon_flux)
 
+# ADD THESE LINES HERE
+# Calculate ThermalVoltage in Python and set it as a global devsim parameter
+k_B_eV = devsim.get_parameter(name="k_B_eV")
+T = devsim.get_parameter(name="T")
+devsim.set_parameter(name="ThermalVoltage", value=k_B_eV * T)
+
 for region in ["p_region", "n_region"]:
+    # The incorrect devsim.node_model line for ThermalVoltage has been removed from the loop.
+
+    devsim.edge_model(device=device, region=region, name="DField", equation="Permittivity * ElectricField")
 
     devsim.edge_model(device=device, region=region, name="DField", equation="Permittivity * ElectricField")
     devsim.edge_model(device=device, region=region, name="DField:Potential@n0",
