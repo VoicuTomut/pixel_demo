@@ -16,7 +16,7 @@ photon_flux = 0.0
 peak_p_doping = 5e17
 junction_depth = 0.5
 doping_straggle = 0.1
-
+TEMPERATURE_K = 300.0 
 # CORRECTED: Use more realistic SRV values for a passivated surface
 s_n = 100.0  # Electron SRV at the top surface (cm/s)
 s_p = 100.0  # Hole SRV at the top surface (cm/s)
@@ -156,15 +156,48 @@ def define_doping(device, p_peak, j_depth_cm, p_straggle_cm, n_bulk):
 
 def define_mobility_models(device, region):
     """
-    Defines doping-dependent mobility using the Caughey-Thomas model.
+    Defines mobility using the Caughey-Thomas model, including both
+    doping-dependence (low-field) and field-dependence (high-field velocity saturation).
     """
+    # --- Part 1: Doping-Dependent Low-Field Mobility (at nodes) ---
     devsim.node_model(device=device, region=region, name="TotalDoping", equation="abs(Acceptors) + abs(Donors)")
+
+    # Caughey-Thomas parameters for low-field mobility
     mu_max_n, mu_min_n, N_ref_n, alpha_n = 1417.0, 68.5, 1.10e17, 0.711
-    eqn_n = f"{mu_min_n} + ({mu_max_n} - {mu_min_n}) / (1 + (TotalDoping / {N_ref_n})^{alpha_n})"
-    devsim.node_model(device=device, region=region, name="ElectronMobility", equation=eqn_n)
+    low_field_eqn_n = f"{mu_min_n} + ({mu_max_n} - {mu_min_n}) / (1 + (TotalDoping / {N_ref_n})^{alpha_n})"
+    devsim.node_model(device=device, region=region, name="LowFieldElectronMobility", equation=low_field_eqn_n)
+
     mu_max_p, mu_min_p, N_ref_p, alpha_p = 470.5, 44.9, 2.23e17, 0.719
-    eqn_p = f"{mu_min_p} + ({mu_max_p} - {mu_min_p}) / (1 + (TotalDoping / {N_ref_p})^{alpha_p})"
-    devsim.node_model(device=device, region=region, name="HoleMobility", equation=eqn_p)
+    low_field_eqn_p = f"{mu_min_p} + ({mu_max_p} - {mu_min_p}) / (1 + (TotalDoping / {N_ref_p})^{alpha_p})"
+    devsim.node_model(device=device, region=region, name="LowFieldHoleMobility", equation=low_field_eqn_p)
+
+    # --- Part 2: Field-Dependent High-Field Mobility (at edges) ---
+    # Average the low-field mobility from nodes to edges
+    devsim.edge_average_model(device=device, region=region, node_model="LowFieldElectronMobility",
+                              edge_model="LowFieldElectronMobility_edge")
+    devsim.edge_average_model(device=device, region=region, node_model="LowFieldHoleMobility",
+                              edge_model="LowFieldHoleMobility_edge")
+
+    # Get the magnitude of the driving electric field along the edge
+    # E_parallel = abs( (V@n0 - V@n1)/h ) = abs(ElectricField)
+    devsim.edge_from_node_model(device=device, region=region, node_model="Potential")
+    devsim.edge_model(device=device, region=region, name="ElectricField",
+                      equation="(Potential@n0 - Potential@n1) * EdgeInverseLength")
+
+    devsim.edge_model(device=device, region=region, name="EParallel", equation="abs(ElectricField)")
+
+    # Saturation velocity parameters for Silicon
+    v_sat_n, beta_n = 1.07e7, 2.0
+    v_sat_p, beta_p = 8.37e6, 1.0
+
+    # Final Caughey-Thomas mobility formula implemented on the edges
+    final_eqn_n = f"LowFieldElectronMobility_edge / (1 + (LowFieldElectronMobility_edge * EParallel / {v_sat_n})^{beta_n})^(1/{beta_n})"
+    devsim.edge_model(device=device, region=region, name="ElectronMobility", equation=final_eqn_n)
+
+    final_eqn_p = f"LowFieldHoleMobility_edge / (1 + (LowFieldHoleMobility_edge * EParallel / {v_sat_p})^{beta_p})^(1/{beta_p})"
+    devsim.edge_model(device=device, region=region, name="HoleMobility", equation=final_eqn_p)
+
+
 
 
 print("\nSetting silicon material parameters...")
@@ -175,6 +208,13 @@ define_doping(device=device,
               j_depth_cm=junction_depth * 1e-4,
               p_straggle_cm=doping_straggle * 1e-4,
               n_bulk=1e15)
+
+
+for region in ["p_region", "n_region"]:
+    devsim.node_solution(device=device, region=region, name="Potential")
+    devsim.node_solution(device=device, region=region, name="Electrons")
+    devsim.node_solution(device=device, region=region, name="Holes")
+
 print("Defining doping-dependent mobility models...")
 define_mobility_models(device=device, region="p_region")
 define_mobility_models(device=device, region="n_region")
@@ -191,11 +231,7 @@ print("\n--- Step 2 complete: Physics and doping defined ---")
 print("--- STEP 3: Setting Up Full Photodiode Physical Model ---")
 
 # --- Part A: Create Solution Variables ---
-print("  3A: Creating solution variables (Potential, Electrons, Holes)...")
-for region in ["p_region", "n_region"]:
-    devsim.node_solution(device=device, region=region, name="Potential")
-    devsim.node_solution(device=device, region=region, name="Electrons")
-    devsim.node_solution(device=device, region=region, name="Holes")
+
 
 # --- Part B: Define ALL Bulk Physical Models ---
 print("  3B: Defining all bulk physical models...")
@@ -203,9 +239,7 @@ devsim.set_parameter(name="ThermalVoltage", value=0.0259)
 devsim.set_parameter(name="PhotonFlux", value=photon_flux)
 
 for region in ["p_region", "n_region"]:
-    devsim.edge_from_node_model(device=device, region=region, node_model="Potential")
-    devsim.edge_model(device=device, region=region, name="ElectricField",
-                      equation="(Potential@n0 - Potential@n1) * EdgeInverseLength")
+
     devsim.edge_model(device=device, region=region, name="DField", equation="Permittivity * ElectricField")
     devsim.edge_model(device=device, region=region, name="DField:Potential@n0",
                       equation="Permittivity * EdgeInverseLength")
@@ -219,20 +253,18 @@ for region in ["p_region", "n_region"]:
     devsim.edge_model(device=device, region=region, name="Bernoulli_neg_vdiff", equation="B(-vdiff)")
     devsim.edge_from_node_model(device=device, region=region, node_model="Electrons")
     devsim.edge_from_node_model(device=device, region=region, node_model="Holes")
-    devsim.edge_from_node_model(device=device, region=region, node_model="ElectronMobility")
-    devsim.edge_from_node_model(device=device, region=region, node_model="HoleMobility")
-    devsim.edge_model(device=device, region=region, name="EdgeElectronMobility",
-                      equation="(ElectronMobility@n0 + ElectronMobility@n1) * 0.5")
-    devsim.edge_model(device=device, region=region, name="EdgeHoleMobility",
-                      equation="(HoleMobility@n0 + HoleMobility@n1) * 0.5")
-    electron_current_eq = "ElectronCharge * EdgeElectronMobility * ThermalVoltage * EdgeInverseLength * (Electrons@n1 * Bernoulli_neg_vdiff - Electrons@n0 * Bernoulli_vdiff)"
+
+    electron_current_eq = "ElectronCharge * ElectronMobility * ThermalVoltage * EdgeInverseLength * (Electrons@n1 * Bernoulli_neg_vdiff - Electrons@n0 * Bernoulli_vdiff)"
     devsim.edge_model(device=device, region=region, name="ElectronCurrent", equation=electron_current_eq)
+
     for v in ["Potential", "Electrons", "Holes"]:
         for n in ["n0", "n1"]:
             devsim.edge_model(device=device, region=region, name=f"ElectronCurrent:{v}@{n}",
                               equation=f"diff({electron_current_eq}, {v}@{n})")
-    hole_current_eq = "ElectronCharge * EdgeHoleMobility * ThermalVoltage * EdgeInverseLength * (Holes@n1 * Bernoulli_vdiff - Holes@n0 * Bernoulli_neg_vdiff)"
+
+    hole_current_eq = "ElectronCharge * HoleMobility * ThermalVoltage * EdgeInverseLength * (Holes@n1 * Bernoulli_vdiff - Holes@n0 * Bernoulli_neg_vdiff)"
     devsim.edge_model(device=device, region=region, name="HoleCurrent", equation=hole_current_eq)
+
     for v in ["Potential", "Electrons", "Holes"]:
         for n in ["n0", "n1"]:
             devsim.edge_model(device=device, region=region, name=f"HoleCurrent:{v}@{n}",
@@ -406,7 +438,7 @@ devsim.interface_equation(device=device, interface="pn_junction", name="Potentia
                           interface_model="Potential_continuity", type="continuous")
 
 # Solve for Potential only
-devsim.solve(type="dc", absolute_error=1e-10, relative_error=1e-12, maximum_iterations=50)
+devsim.solve(type="dc", absolute_error=1e-10, relative_error=1e-12, maximum_iterations=100)
 
 print("    Updating carrier guess using Boltzmann statistics...")
 for region in ["p_region", "n_region"]:
@@ -474,7 +506,7 @@ def run_iv_sweep(device, voltages, p_flux):
         print(f"\nSetting Anode Bias: {v:.3f} V")
         devsim.set_parameter(device=device, name="anode_bias", value=v)
         try:
-            devsim.solve(type="dc", absolute_error=1e10, relative_error=10,
+            devsim.solve(type="dc", absolute_error=1e10, relative_error=0.01,
                          maximum_iterations=400,
                          maximum_divergence=10)
             e_current = devsim.get_contact_current(device=device, contact="anode",
@@ -513,17 +545,17 @@ def run_cv_sweep(device, voltages, freq_hz):
     print(f"\nStarting C-V sweep...")
 
     devsim.set_parameter(device=device, name="anode_bias", value=voltages[0])
-    devsim.solve(type="dc", absolute_error=10.0, relative_error=1e-2, maximum_iterations=200)
+    devsim.solve(type="dc", absolute_error=10.0, relative_error=1e-3, maximum_iterations=200)
 
     for i, v in enumerate(voltages):
         print(f"Step {i + 1}/{len(voltages)}: Bias = {v:.2f} V")
         try:
             devsim.set_parameter(device=device, name="anode_bias", value=v - DELTA_V / 2.0)
-            devsim.solve(type="dc", absolute_error=10.0, relative_error=1e-2, maximum_iterations=200)
+            devsim.solve(type="dc", absolute_error=10.0, relative_error=1e-3, maximum_iterations=200)
             q1 = devsim.get_contact_charge(device=device, contact="anode", equation="PotentialEquation")
 
             devsim.set_parameter(device=device, name="anode_bias", value=v + DELTA_V / 2.0)
-            devsim.solve(type="dc", absolute_error=10.0, relative_error=1e-2, maximum_iterations=100)
+            devsim.solve(type="dc", absolute_error=10.0, relative_error=1e-3, maximum_iterations=100)
             q2 = devsim.get_contact_charge(device=device, contact="anode", equation="PotentialEquation")
 
             C = abs(q2 - q1) / DELTA_V
