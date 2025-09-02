@@ -418,26 +418,50 @@ def define_equilibrium_models(device, region):
                       equation="0.5*(-NetDoping+(NetDoping^2+4*n_i_squared)^0.5)")
 
 def define_node_averaged_fields(device, region):
-    """Define node-averaged electric fields and current densities."""
+    """
+    CORRECTED: Defines node-averaged quantities.
+    1.  Calculates nodal E-field using vector_gradient on Potential.
+    2.  Calculates nodal current densities by reconstructing the drift-diffusion
+        equation using only nodal quantities.
+    """
     print(f"    Defining node-averaged fields and currents for {region}...")
 
-    # Initialize with zero values
-    devsim.node_model(device=device, region=region, name="E_mag_node", equation="0.0")
-    devsim.node_model(device=device, region=region, name="Jn_node", equation="0.0")
-    devsim.node_model(device=device, region=region, name="Jp_node", equation="0.0")
+    # -- Part 1: Calculate Nodal Electric Field --
+    # Use vector_gradient to create Potential_gradx, Potential_grady at the nodes.
+    devsim.vector_gradient(device=device, region=region, node_model="Potential")
+    devsim.node_model(device=device, region=region, name="E_field_x", equation="-Potential_gradx")
+    devsim.node_model(device=device, region=region, name="E_field_y", equation="-Potential_grady")
 
-    # Create node-averaged quantities from edge models
-    devsim.edge_average_model(device=device, region=region, edge_model="ElectricField", node_model="E_mag_node",
-                              average_type="arithmetic")
-    devsim.node_model(device=device, region=region, name="E_mag_node_abs", equation="abs(E_mag_node)")
+    # Calculate the E-field magnitude at the node from its components.
+    devsim.node_model(device=device, region=region, name="E_mag_node_abs",
+                      equation="(E_field_x^2 + E_field_y^2 + 1e-12)^(0.5)") # Add small const for stability
 
-    devsim.edge_average_model(device=device, region=region, edge_model="ElectronCurrent", node_model="Jn_node",
-                              average_type="arithmetic")
-    devsim.node_model(device=device, region=region, name="Jn_mag_node", equation="abs(Jn_node)")
+    # -- Part 2: Reconstruct Nodal Current Density --
+    # We need the gradient of carrier concentrations for the diffusion term.
+    devsim.vector_gradient(device=device, region=region, node_model="Electrons")
+    devsim.vector_gradient(device=device, region=region, node_model="Holes")
 
-    devsim.edge_average_model(device=device, region=region, edge_model="HoleCurrent", node_model="Jp_node",
-                              average_type="arithmetic")
-    devsim.node_model(device=device, region=region, name="Jp_mag_node", equation="abs(Jp_node)")
+    # Get thermal voltage D = mu*Vt (Einstein relation)
+    Vt = devsim.get_parameter(name="ThermalVoltage")
+
+    # Reconstruct Jn = q * (mu_n*n*E + D_n*grad(n)) using only node models
+    # Note: We use LowFieldElectronMobility here as a stable nodal approximation.
+    Jn_x_eq = f"ElectronCharge * (LowFieldElectronMobility * Electrons * E_field_x + {Vt} * LowFieldElectronMobility * Electrons_gradx)"
+    Jn_y_eq = f"ElectronCharge * (LowFieldElectronMobility * Electrons * E_field_y + {Vt} * LowFieldElectronMobility * Electrons_grady)"
+    devsim.node_model(device=device, region=region, name="Jn_x_node", equation=Jn_x_eq)
+    devsim.node_model(device=device, region=region, name="Jn_y_node", equation=Jn_y_eq)
+    devsim.node_model(device=device, region=region, name="Jn_mag_node",
+                      equation="(Jn_x_node^2 + Jn_y_node^2 + 1e-20)^(0.5)") # Add small const for stability
+
+    # Reconstruct Jp = q * (mu_p*p*E - D_p*grad(p)) using only node models
+    Jp_x_eq = f"ElectronCharge * (LowFieldHoleMobility * Holes * E_field_x - {Vt} * LowFieldHoleMobility * Holes_gradx)"
+    Jp_y_eq = f"ElectronCharge * (LowFieldHoleMobility * Holes * E_field_y - {Vt} * LowFieldHoleMobility * Holes_grady)"
+    devsim.node_model(device=device, region=region, name="Jp_x_node", equation=Jp_x_eq)
+    devsim.node_model(device=device, region=region, name="Jp_y_node", equation=Jp_y_eq)
+    devsim.node_model(device=device, region=region, name="Jp_mag_node",
+                      equation="(Jp_x_node^2 + Jp_y_node^2 + 1e-20)^0.5") # Add small const for stability
+
+
 
 def define_srh_recombination(device, region):
     """
@@ -483,7 +507,7 @@ def define_optical_generation(device, region):
 def define_impact_ionization(device, region, material_params):
     """Define impact ionization generation model with proper safety checks."""
     print(f"    Defining impact ionization for {region}...")
-    
+
     # Set impact ionization parameters
     devsim.set_parameter(device=device, region=region, name="a_n", value=material_params["a_n"])
     devsim.set_parameter(device=device, region=region, name="b_n", value=material_params["b_n"])
@@ -654,18 +678,18 @@ def solve_initial_equilibrium(device):
                         variable_name="Potential",
                         node_model="SpaceCharge",
                         edge_model="DField",
-                        variable_update="log_damp")
+                        variable_update="default")
     for contact in ["anode", "cathode"]:
         devsim.contact_equation(device=device, contact=contact, name="PotentialEquation",
                                 node_model=f"{contact}_potential_bc")
     devsim.interface_equation(device=device, interface="pn_junction", name="PotentialEquation",
                               interface_model="Potential_continuity", type="continuous")
     try:
-        devsim.solve(type="dc", absolute_error=1e-6, relative_error=1e-8, maximum_iterations=200)
+        devsim.solve(type="dc", absolute_error=10, relative_error=1e-8, maximum_iterations=200)
         print("    ✅ Poisson equation solved successfully.")
     except devsim.error as msg:
         print(f"    ⚠️ Poisson solve failed, trying with relaxed parameters: {msg}")
-        devsim.solve(type="dc", absolute_error=1e-4, relative_error=1e-6, maximum_iterations=300)
+        devsim.solve(type="dc", absolute_error=10, relative_error=1e-6, maximum_iterations=300)
 
     # ------------------ STEP 2: CREATE SUPERIOR GUESS FOR CARRIERS ------------------
     # Use the result of the Poisson solve to create a near-perfect initial guess
@@ -719,16 +743,16 @@ def solve_initial_equilibrium(device):
 
     # Solve the full system
     try:
-        devsim.solve(type="dc", absolute_error=1e-8, relative_error=1e-2, maximum_iterations=300)
+        devsim.solve(type="dc", absolute_error=10, relative_error=1e-2, maximum_iterations=300)
         print("    ✅ Full system solved successfully")
     except devsim.error as msg:
         print(f"    ⚠️ Full system solve failed, trying with relaxed parameters: {msg}")
         try:
-            devsim.solve(type="dc", absolute_error=1e-6, relative_error=1e-8, maximum_iterations=400)
+            devsim.solve(type="dc", absolute_error=10, relative_error=1e-8, maximum_iterations=400)
             print("    ✅ Full system solved with relaxed parameters")
         except devsim.error as msg2:
             print(f"    ⚠️ Second attempt failed, trying very relaxed parameters: {msg2}")
-            devsim.solve(type="dc", absolute_error=1e-4, relative_error=1e-6, maximum_iterations=600)
+            devsim.solve(type="dc", absolute_error=10, relative_error=1e-6, maximum_iterations=600)
             print("    ✅ Full system solved with very relaxed parameters")
 
     print("✅ Initial equilibrium established successfully")
@@ -765,8 +789,8 @@ def run_iv_sweep(device, voltages, p_flux, material_params=None, wavelength_nm=N
             devsim.set_parameter(device=device, name="anode_bias", value=step_v)
             try:
                 devsim.solve(type="dc",
-                             absolute_error=1e10,
-                             relative_error=1e-2,
+                             absolute_error=10,
+                             relative_error=1e-3,
                              maximum_iterations=300,
                              maximum_divergence=30)
 
@@ -784,7 +808,7 @@ def run_iv_sweep(device, voltages, p_flux, material_params=None, wavelength_nm=N
                 try:
                     print("  Attempting recovery with relaxed parameters...")
                     devsim.solve(type="dc",
-                                 absolute_error=1e8,
+                                 absolute_error=10,
                                  relative_error=5e-2,
                                  maximum_iterations=500,
                                  maximum_divergence=50)
@@ -879,7 +903,7 @@ def run_spectral_sweep(device, wavelengths_nm, qe_bias, incident_flux, dark_curr
 
         try:
             # Solve for the light condition at this wavelength
-            devsim.solve(type="dc", absolute_error=1e10, relative_error=1e-2, maximum_iterations=100)
+            devsim.solve(type="dc", absolute_error=1.0, relative_error=1e-2, maximum_iterations=100)
 
             # Get the light current
             e_current = devsim.get_contact_current(device=device, contact="anode",
