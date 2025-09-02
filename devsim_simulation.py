@@ -73,8 +73,8 @@ SILICON_PARAMS = {
     "Nv_300K": 1.04e19,  # Valence band density of states at 300K
     "C_n_auger": 2.8e-31,  # Auger coefficient for electrons (cm^6/s)
     "C_p_auger": 9.9e-32,  # Auger coefficient for holes (cm^6/s)
-    "E_th_n": 3.5e5,  # Impact ionization threshold for electrons (V/cm)
-    "E_th_p": 3.5e5,  # Impact ionization threshold for holes (V/cm)
+    "E_th_n": 3.5e6,  # Impact ionization threshold for electrons (V/cm)
+    "E_th_p": 3.5e6,  # Impact ionization threshold for holes (V/cm)
 
 
     "BGN_V0": 0.009,  # V
@@ -94,10 +94,294 @@ GLOBAL_PARAMS = {
     "wavelength_points": 71
 }
 
+# Debug functions:
+
+
+
+# Fixed debug functions that convert devsim arrays to numpy arrays
+
+def debug_doping_profile(device):
+    """Debug the doping profile to verify it's correct."""
+    print("\n=== DEBUGGING DOPING PROFILE ===")
+
+    for region in ["p_region", "n_region"]:
+        print(f"\nRegion: {region}")
+
+        # Get node positions and doping values - CONVERT TO NUMPY ARRAYS
+        node_pos = np.array(devsim.get_node_model_values(device=device, region=region, name="y"))
+        acceptors = np.array(devsim.get_node_model_values(device=device, region=region, name="Acceptors"))
+        donors = np.array(devsim.get_node_model_values(device=device, region=region, name="Donors"))
+        net_doping = np.array(devsim.get_node_model_values(device=device, region=region, name="NetDoping"))
+
+        # Find surface and key positions
+        surface_idx = np.argmin(np.abs(node_pos))
+        bulk_idx = np.argmax(node_pos) if region == "n_region" else np.argmin(node_pos)
+
+        print(
+            f"  Surface (y≈0): N_A={acceptors[surface_idx]:.2e}, N_D={donors[surface_idx]:.2e}, Net={net_doping[surface_idx]:.2e}")
+        print(f"  Min/Max y: {np.min(node_pos):.3f} to {np.max(node_pos):.3f} μm")
+        print(f"  NetDoping range: {np.min(net_doping):.2e} to {np.max(net_doping):.2e}")
+
+        # Check for unphysical values
+        if np.any(acceptors < 0) or np.any(donors < 0):
+            print(f"  ⚠️ WARNING: Negative doping found in {region}")
+        if np.any(np.isnan(net_doping)) or np.any(np.isinf(net_doping)):
+            print(f"  ⚠️ WARNING: NaN/Inf in NetDoping in {region}")
+
+
+def debug_equilibrium_state(device):
+    """Debug the equilibrium carrier concentrations and potential."""
+    print("\n=== DEBUGGING EQUILIBRIUM STATE ===")
+
+    for region in ["p_region", "n_region"]:
+        print(f"\nRegion: {region}")
+
+        # Get equilibrium values - CONVERT TO NUMPY ARRAYS
+        potential = np.array(devsim.get_node_model_values(device=device, region=region, name="Potential"))
+        electrons = np.array(devsim.get_node_model_values(device=device, region=region, name="Electrons"))
+        holes = np.array(devsim.get_node_model_values(device=device, region=region, name="Holes"))
+        ni = np.array(devsim.get_node_model_values(device=device, region=region, name="IntrinsicCarrierDensity"))
+        net_doping = np.array(devsim.get_node_model_values(device=device, region=region, name="NetDoping"))
+
+        print(f"  Potential range: {np.min(potential):.3f} to {np.max(potential):.3f} V")
+        print(f"  Electron density: {np.min(electrons):.2e} to {np.max(electrons):.2e} cm⁻³")
+        print(f"  Hole density: {np.min(holes):.2e} to {np.max(holes):.2e} cm⁻³")
+        print(f"  ni: {np.mean(ni):.2e} cm⁻³")
+
+        # Check charge neutrality
+        space_charge = np.array(devsim.get_node_model_values(device=device, region=region, name="SpaceCharge"))
+        max_charge_imbalance = np.max(np.abs(space_charge))
+        print(f"  Max charge imbalance: {max_charge_imbalance:.2e} cm⁻³")
+
+        # Check for unphysical carrier concentrations
+        if np.any(electrons <= 0) or np.any(holes <= 0):
+            print(f"  ⚠️ WARNING: Non-positive carrier concentrations in {region}")
+
+        # Check pn product
+        pn_product = electrons * holes
+        ni_squared = ni**2
+        max_pn_error = np.max(np.abs(pn_product - ni_squared) / ni_squared)
+        print(f"  Max pn/ni² error: {max_pn_error:.2%}")
+
+
+def debug_current_components(device, voltage):
+    """Debug current components at a specific voltage."""
+    print(f"\n=== DEBUGGING CURRENTS AT {voltage}V ===")
+
+    # Set voltage and solve
+    devsim.set_parameter(device=device, name="anode_bias", value=voltage)
+    try:
+        devsim.solve(type="dc", absolute_error=10, relative_error=1e-8, maximum_iterations=200)
+    except Exception as e:
+        print(f"Failed to solve at {voltage}V: {e}")
+        return
+
+    # Get contact currents
+    try:
+        e_current = devsim.get_contact_current(device=device, contact="anode", equation="ElectronContinuityEquation")
+        h_current = devsim.get_contact_current(device=device, contact="anode", equation="HoleContinuityEquation")
+        total_current = e_current + h_current
+
+        print(f"  Electron current: {e_current:.4e} A/cm")
+        print(f"  Hole current: {h_current:.4e} A/cm")
+        print(f"  Total current: {total_current:.4e} A/cm")
+
+    except Exception as e:
+        print(f"Error getting currents: {e}")
+
+    # Debug generation-recombination in each region
+    for region in ["p_region", "n_region"]:
+        print(f"\n  {region} G-R Analysis:")
+
+        try:
+            # Get G-R components - CONVERT TO NUMPY ARRAYS
+            srh = np.array(devsim.get_node_model_values(device=device, region=region, name="USRH"))
+            auger = np.array(devsim.get_node_model_values(device=device, region=region, name="UAuger"))
+            optical = np.array(devsim.get_node_model_values(device=device, region=region, name="OpticalGeneration"))
+            impact = np.array(devsim.get_node_model_values(device=device, region=region, name="G_impact"))
+            net_recomb = np.array(devsim.get_node_model_values(device=device, region=region, name="NetRecombination"))
+
+            print(f"    SRH recomb: {np.mean(srh):.2e} ± {np.std(srh):.2e} cm⁻³s⁻¹")
+            print(f"    Auger recomb: {np.mean(auger):.2e} ± {np.std(auger):.2e} cm⁻³s⁻¹")
+            print(f"    Optical gen: {np.mean(optical):.2e} ± {np.std(optical):.2e} cm⁻³s⁻¹")
+            print(f"    Impact ion: {np.mean(impact):.2e} ± {np.std(impact):.2e} cm⁻³s⁻¹")
+            print(f"    Net recomb: {np.mean(net_recomb):.2e} ± {np.std(net_recomb):.2e} cm⁻³s⁻¹")
+
+            # Check for problematic values
+            if np.any(np.isnan(net_recomb)) or np.any(np.isinf(net_recomb)):
+                print(f"    ⚠️ WARNING: NaN/Inf in NetRecombination")
+            if np.max(np.abs(impact)) > 1e20:
+                print(f"    ⚠️ WARNING: Very high impact ionization")
+
+        except Exception as e:
+            print(f"    Error getting G-R data: {e}")
+
+
+def comprehensive_optical_debug(device):
+    """Comprehensive debug of optical generation coupling."""
+    print(f"\n=== COMPREHENSIVE OPTICAL DEBUG ===")
+
+    # Check current parameter values
+    try:
+        flux = devsim.get_parameter(name="EffectivePhotonFlux")
+        alpha = devsim.get_parameter(name="alpha")
+        print(f"EffectivePhotonFlux: {flux:.2e}")
+        print(f"alpha: {alpha:.2e}")
+    except:
+        print("Could not retrieve parameters")
+
+    for region in ["p_region", "n_region"]:
+        try:
+            # Check the individual components
+            optical = np.array(devsim.get_node_model_values(device=device, region=region, name="OpticalGeneration"))
+            srh = np.array(devsim.get_node_model_values(device=device, region=region, name="USRH"))
+            auger = np.array(devsim.get_node_model_values(device=device, region=region, name="UAuger"))
+            net_recomb = np.array(devsim.get_node_model_values(device=device, region=region, name="NetRecombination"))
+
+            print(f"\n{region}:")
+            print(f"  OpticalGeneration: {np.mean(optical):.2e} ± {np.std(optical):.2e}")
+            print(f"  SRH: {np.mean(srh):.2e} ± {np.std(srh):.2e}")
+            print(f"  Auger: {np.mean(auger):.2e} ± {np.std(auger):.2e}")
+            print(f"  NetRecombination: {np.mean(net_recomb):.2e} ± {np.std(net_recomb):.2e}")
+
+            # Check if the optical generation is actually affecting net recombination
+            theoretical_net = np.mean(srh) + np.mean(auger) - np.mean(optical)
+            print(f"  Theoretical Net: {theoretical_net:.2e}")
+            print(f"  Actual Net: {np.mean(net_recomb):.2e}")
+            print(f"  Match: {abs(theoretical_net - np.mean(net_recomb)) < 1e-10}")
+
+        except Exception as e:
+            print(f"Error in {region}: {e}")
+
+
+def debug_optical_parameters(device, wavelength_nm, photon_flux, material_params):
+    """Debug optical generation parameters."""
+    print(f"\n=== DEBUGGING OPTICAL PARAMETERS ===")
+    print(f"Wavelength: {wavelength_nm} nm")
+    print(f"Input photon flux: {photon_flux:.2e} photons/cm²/s")
+
+    # Check optical constants
+    n_r, k_e = get_silicon_optical_constants_lookup(wavelength_nm, material_params)
+    alpha = get_alpha_for_wavelength(wavelength_nm, material_params)
+    reflectivity = get_reflectivity(wavelength_nm, material_params)
+
+    print(f"Refractive index n: {n_r:.3f}")
+    print(f"Extinction coeff k: {k_e:.6f}")
+    print(f"Absorption coeff α: {alpha:.2e} cm⁻¹")
+    print(f"Reflectivity: {reflectivity:.2%}")
+
+    effective_flux = photon_flux * (1.0 - reflectivity)
+    print(f"Effective photon flux: {effective_flux:.2e} photons/cm²/s")
+
+    # Check devsim parameters
+    try:
+        alpha_param = devsim.get_parameter(name="alpha")
+        flux_param = devsim.get_parameter(name="EffectivePhotonFlux")
+        print(f"DEVSIM alpha parameter: {alpha_param:.2e}")
+        print(f"DEVSIM EffectivePhotonFlux parameter: {flux_param:.2e}")
+    except:
+        print("⚠️ Could not retrieve DEVSIM optical parameters")
+
+    # Check optical generation in each region
+    for region in ["p_region", "n_region"]:
+        try:
+            opt_gen = np.array(devsim.get_node_model_values(device=device, region=region, name="OpticalGeneration"))
+            y_pos = np.array(devsim.get_node_model_values(device=device, region=region, name="y"))
+
+            print(f"\n{region} optical generation:")
+            print(f"  Position range: {np.min(y_pos):.3f} to {np.max(y_pos):.3f} μm")
+            print(f"  Generation range: {np.min(opt_gen):.2e} to {np.max(opt_gen):.2e} cm⁻³s⁻¹")
+            print(f"  Total generation: {np.sum(opt_gen):.2e} cm⁻³s⁻¹")
+
+        except Exception as e:
+            print(f"  Error getting optical generation for {region}: {e}")
+
+
+def debug_photocurrent_mechanism(device, voltage):
+    """Debug specifically how optical generation affects currents."""
+    print(f"\n=== DEBUGGING PHOTOCURRENT MECHANISM AT {voltage}V ===")
+
+    devsim.set_parameter(device=device, name="anode_bias", value=voltage)
+
+    # First solve with light
+    current_flux = devsim.get_parameter(name="EffectivePhotonFlux")
+    print(f"Current EffectivePhotonFlux: {current_flux:.2e}")
+
+    try:
+        devsim.solve(type="dc", absolute_error=10, relative_error=1e-8, maximum_iterations=200)
+
+        # Get currents with light
+        e_current_light = devsim.get_contact_current(device=device, contact="anode",
+                                                     equation="ElectronContinuityEquation")
+        h_current_light = devsim.get_contact_current(device=device, contact="anode", equation="HoleContinuityEquation")
+
+        print(f"With light - Electron current: {e_current_light:.6e} A/cm")
+        print(f"With light - Hole current: {h_current_light:.6e} A/cm")
+        print(f"With light - Total current: {e_current_light + h_current_light:.6e} A/cm")
+
+        # Temporarily turn off light
+        devsim.set_parameter(name="EffectivePhotonFlux", value=0.0)
+        devsim.solve(type="dc", absolute_error=10, relative_error=1e-8, maximum_iterations=200)
+
+        # Get currents without light
+        e_current_dark = devsim.get_contact_current(device=device, contact="anode",
+                                                    equation="ElectronContinuityEquation")
+        h_current_dark = devsim.get_contact_current(device=device, contact="anode", equation="HoleContinuityEquation")
+
+        print(f"Without light - Electron current: {e_current_dark:.6e} A/cm")
+        print(f"Without light - Hole current: {h_current_dark:.6e} A/cm")
+        print(f"Without light - Total current: {e_current_dark + h_current_dark:.6e} A/cm")
+
+        print(
+            f"Photocurrent difference: {(e_current_light + h_current_light) - (e_current_dark + h_current_dark):.6e} A/cm")
+
+        # Restore light
+        devsim.set_parameter(name="EffectivePhotonFlux", value=current_flux)
+
+    except Exception as e:
+        print(f"Error in photocurrent debug: {e}")
+
+def debug_field_and_currents(device):
+    """Debug electric field and current density distributions."""
+    print(f"\n=== DEBUGGING FIELDS AND CURRENTS ===")
+
+    for region in ["p_region", "n_region"]:
+        try:
+            e_field_mag = np.array(devsim.get_node_model_values(device=device, region=region, name="E_mag_node_abs"))
+            jn_mag = np.array(devsim.get_node_model_values(device=device, region=region, name="Jn_mag_node"))
+            jp_mag = np.array(devsim.get_node_model_values(device=device, region=region, name="Jp_mag_node"))
+
+            print(f"\n{region}:")
+            print(f"  E-field: {np.min(e_field_mag):.2e} to {np.max(e_field_mag):.2e} V/cm")
+            print(f"  Jn magnitude: {np.min(jn_mag):.2e} to {np.max(jn_mag):.2e} A/cm²")
+            print(f"  Jp magnitude: {np.min(jp_mag):.2e} to {np.max(jp_mag):.2e} A/cm²")
+
+            # Check for very high fields that might trigger impact ionization
+            high_field_nodes = np.sum(e_field_mag > 1e5)
+            if high_field_nodes > 0:
+                print(f"  ⚠️ WARNING: {high_field_nodes} nodes with E > 10⁵ V/cm")
+
+        except Exception as e:
+            print(f"  Error getting field data for {region}: {e}")
+
 
 # ==============================================================================
 #                      OPTICAL HELPER FUNCTIONS
 # ==============================================================================
+def force_optical_update(device):
+    """Force recalculation of optical generation after parameter changes."""
+    for region in ["p_region", "n_region"]:
+        # Force recalculation of optical generation model
+        devsim.node_model(device=device, region=region, name="OpticalGeneration",
+                          equation="EffectivePhotonFlux * alpha * exp(-alpha * abs(y* 1e-4))")
+        # Force recalculation of net recombination
+        devsim.node_model(device=device, region=region, name="NetRecombination",
+                          equation="USRH + UAuger - G_impact - OpticalGeneration")
+        devsim.node_model(device=device, region=region, name="eCharge_x_NetRecomb",
+                          equation="ElectronCharge * (USRH + UAuger - G_impact - OpticalGeneration)")
+        devsim.node_model(device=device, region=region, name="Neg_eCharge_x_NetRecomb",
+                          equation="-ElectronCharge * (USRH + UAuger - G_impact - OpticalGeneration)")
+
 def get_silicon_optical_constants_lookup(wavelength_nm, material_params):
     """
     Calculates n_r and k_e for the material using a lookup table and interpolation.
@@ -233,7 +517,7 @@ def define_doping(device, material_params):
     n_bulk = material_params["n_bulk"]
 
     # Define the Gaussian acceptor profile for the p-implant
-    gaussian_p_eq =  f"{p_peak} * exp(-0.5 * ((y + {projected_range_cm}) / {p_straggle_cm})^2)"
+    gaussian_p_eq = f"{p_peak} * exp(-0.5 * ((y* 1e-4 - {projected_range_cm}) / {p_straggle_cm})^2)"
 
     # p_region: Contains both the p-implant and the n-bulk background
     devsim.node_model(device=device, region="p_region", name="Acceptors", equation=gaussian_p_eq)
@@ -500,7 +784,7 @@ def define_optical_generation(device, region):
 
     # CORRECTED: This now uses EffectivePhotonFlux which will account for reflection
     devsim.node_model(device=device, region=region, name="OpticalGeneration",
-                      equation="EffectivePhotonFlux * alpha * exp(-alpha * abs(y))")
+                      equation="EffectivePhotonFlux * alpha * exp(-alpha * abs(y* 1e-4))")
     devsim.node_model(device=device, region=region, name="OpticalGeneration:Electrons", equation="0.0")
     devsim.node_model(device=device, region=region, name="OpticalGeneration:Holes", equation="0.0")
 
@@ -508,33 +792,36 @@ def define_impact_ionization(device, region, material_params):
     """Define impact ionization generation model with proper safety checks."""
     print(f"    Defining impact ionization for {region}...")
 
-    # Set impact ionization parameters
-    devsim.set_parameter(device=device, region=region, name="a_n", value=material_params["a_n"])
-    devsim.set_parameter(device=device, region=region, name="b_n", value=material_params["b_n"])
-    devsim.set_parameter(device=device, region=region, name="a_p", value=material_params["a_p"])
-    devsim.set_parameter(device=device, region=region, name="b_p", value=material_params["b_p"])
-    devsim.set_parameter(device=device, region=region, name="E_th_n", value=material_params["E_th_n"])
-    devsim.set_parameter(device=device, region=region, name="E_th_p", value=material_params["E_th_p"])
+    # # Set impact ionization parameters
+    # devsim.set_parameter(device=device, region=region, name="a_n", value=material_params["a_n"])
+    # devsim.set_parameter(device=device, region=region, name="b_n", value=material_params["b_n"])
+    # devsim.set_parameter(device=device, region=region, name="a_p", value=material_params["a_p"])
+    # devsim.set_parameter(device=device, region=region, name="b_p", value=material_params["b_p"])
+    # devsim.set_parameter(device=device, region=region, name="E_th_n", value=material_params["E_th_n"])
+    # devsim.set_parameter(device=device, region=region, name="E_th_p", value=material_params["E_th_p"])
+    #
+    # # *** FIX APPLIED HERE ***
+    # # Added a small constant (1e-30) to the denominator to prevent division by zero.
+    # # The ifelse condition is simplified to only check against the threshold field.
+    # devsim.node_model(device=device, region=region, name="alpha_n_node",
+    #                   equation=f"ifelse(E_mag_node_abs > E_th_n, a_n * exp(-b_n / (E_mag_node_abs + 1e-30)), 0.0)")
+    # devsim.node_model(device=device, region=region, name="alpha_p_node",
+    #                   equation=f"ifelse(E_mag_node_abs > E_th_p, a_p * exp(-b_p / (E_mag_node_abs + 1e-30)), 0.0)")
+    #
+    # # The generation rate formula remains the same, but now relies on the safe alpha models.
+    # # The original ifelse conditions here were good for stability.
+    # min_field = 1e4 # A reasonable field to start considering ionization
+    # generation_eq = f"ifelse(Jn_mag_node > 1e-20 && E_mag_node_abs > {min_field}, alpha_n_node * Jn_mag_node / ElectronCharge, 0.0) + ifelse(Jp_mag_node > 1e-20 && E_mag_node_abs > {min_field}, alpha_p_node * Jp_mag_node / ElectronCharge, 0.0)"
+    # devsim.node_model(device=device, region=region, name="G_impact", equation=generation_eq)
+    #
+    # devsim.node_model(device=device, region=region, name="G_impact:Electrons",
+    #                   equation=f"diff({generation_eq}, Electrons)")
+    # devsim.node_model(device=device, region=region, name="G_impact:Holes",
+    #                   equation=f"diff({generation_eq}, Holes)")
 
-    # *** FIX APPLIED HERE ***
-    # Added a small constant (1e-30) to the denominator to prevent division by zero.
-    # The ifelse condition is simplified to only check against the threshold field.
-    devsim.node_model(device=device, region=region, name="alpha_n_node",
-                      equation=f"ifelse(E_mag_node_abs > E_th_n, a_n * exp(-b_n / (E_mag_node_abs + 1e-30)), 0.0)")
-    devsim.node_model(device=device, region=region, name="alpha_p_node",
-                      equation=f"ifelse(E_mag_node_abs > E_th_p, a_p * exp(-b_p / (E_mag_node_abs + 1e-30)), 0.0)")
-
-    # The generation rate formula remains the same, but now relies on the safe alpha models.
-    # The original ifelse conditions here were good for stability.
-    min_field = 1e4 # A reasonable field to start considering ionization
-    generation_eq = f"ifelse(Jn_mag_node > 1e-20 && E_mag_node_abs > {min_field}, alpha_n_node * Jn_mag_node / ElectronCharge, 0.0) + ifelse(Jp_mag_node > 1e-20 && E_mag_node_abs > {min_field}, alpha_p_node * Jp_mag_node / ElectronCharge, 0.0)"
-    devsim.node_model(device=device, region=region, name="G_impact", equation=generation_eq)
-
-    devsim.node_model(device=device, region=region, name="G_impact:Electrons",
-                      equation=f"diff({generation_eq}, Electrons)")
-    devsim.node_model(device=device, region=region, name="G_impact:Holes",
-                      equation=f"diff({generation_eq}, Holes)")
-
+    devsim.node_model(device=device, region=region, name="G_impact", equation="0.0")
+    devsim.node_model(device=device, region=region, name="G_impact:Electrons", equation="0.0")
+    devsim.node_model(device=device, region=region, name="G_impact:Holes", equation="0.0")
 
 def define_net_recombination(device, region):
     """Assembles all generation and recombination models into a single NetRecombination term."""
@@ -831,7 +1118,7 @@ def run_iv_sweep(device, voltages, p_flux, material_params=None, wavelength_nm=N
             break
 
     devsim.set_parameter(device=device, name="anode_bias", value=0.0)
-    devsim.set_parameter(name="EffectivePhotonFlux", value=0.0)  # Reset flux
+
     return np.array(currents)
 
 
@@ -990,16 +1277,33 @@ def main():
     # Step 2: Setup physics
     setup_physics_and_materials(GLOBAL_PARAMS["device_name"], SILICON_PARAMS, GLOBAL_PARAMS)
 
+
     # Step 3: Setup photodiode model
     setup_photodiode_model(GLOBAL_PARAMS["device_name"], SILICON_PARAMS, GLOBAL_PARAMS)
     setup_boundary_conditions(GLOBAL_PARAMS["device_name"], SILICON_PARAMS)
+    debug_doping_profile(GLOBAL_PARAMS["device_name"])
     solve_initial_equilibrium(GLOBAL_PARAMS["device_name"])
+    debug_equilibrium_state(GLOBAL_PARAMS["device_name"])
+
 
     # Step 4: Run simulations
     print("\n--- Running Single-Point Simulations for I-V, C-V, and QE vs. V plots ---")
+    debug_current_components(GLOBAL_PARAMS["device_name"], voltage=0.0)
+    debug_current_components(GLOBAL_PARAMS["device_name"], voltage=-1.0)
+    devsim.set_parameter(name="EffectivePhotonFlux", value=6.57e16)
+    force_optical_update(GLOBAL_PARAMS["device_name"])
+    for region in ["p_region", "n_region"]:
+        optical = np.array(
+            devsim.get_node_model_values(device=GLOBAL_PARAMS["device_name"], region=region, name="OpticalGeneration"))
+        net_recomb = np.array(
+            devsim.get_node_model_values(device=GLOBAL_PARAMS["device_name"], region=region, name="NetRecombination"))
+        print(f"{region}: OptGen = {np.mean(optical):.2e}, NetRecomb = {np.mean(net_recomb):.2e}")
+    debug_photocurrent_mechanism(GLOBAL_PARAMS["device_name"], 0.0)
+    comprehensive_optical_debug(GLOBAL_PARAMS["device_name"])
+
 
     # I-V and QE vs. V Simulation
-    iv_voltages = np.linspace(0, -30, 61)
+    iv_voltages = np.linspace(200, -200, 65)
     LIGHT_PHOTON_FLUX = 1e17
     WAVELENGTH_NM_SINGLE = 650
 
@@ -1015,14 +1319,23 @@ def main():
         f"Reflectivity at {WAVELENGTH_NM_SINGLE} nm is {reflectivity_single:.2%}, Effective Flux: {effective_flux_single:.2e}")
 
     # Run sweeps
+    print("optical debug 1")
+    comprehensive_optical_debug(GLOBAL_PARAMS["device_name"])
+    debug_optical_parameters(GLOBAL_PARAMS["device_name"], 650, 1e17, SILICON_PARAMS)
 
     dark_currents_single = run_iv_sweep(GLOBAL_PARAMS["device_name"], iv_voltages, p_flux=0.0)
+
     light_currents_single = run_iv_sweep(GLOBAL_PARAMS["device_name"], iv_voltages,
                                          p_flux=LIGHT_PHOTON_FLUX,
                                          material_params=SILICON_PARAMS,
                                          wavelength_nm=WAVELENGTH_NM_SINGLE)
     qe_vs_voltage = calculate_qe(dark_currents_single, light_currents_single, LIGHT_PHOTON_FLUX,
                              wavelength_nm=WAVELENGTH_NM_SINGLE)
+
+    print("optical debug 2")
+    comprehensive_optical_debug(GLOBAL_PARAMS["device_name"])
+    debug_optical_parameters(GLOBAL_PARAMS["device_name"], 650, 1e17, SILICON_PARAMS)
+
     # C-V Simulation
     cv_voltages = np.linspace(0, -5, 21)
     capacitances = run_cv_sweep_ac(GLOBAL_PARAMS["device_name"], cv_voltages, freq_hz=1e6)
