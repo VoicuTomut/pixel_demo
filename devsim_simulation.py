@@ -535,33 +535,31 @@ def define_impact_ionization(device, region, material_params):
     devsim.node_model(device=device, region=region, name="G_impact:Holes",
                       equation=f"diff({generation_eq}, Holes)")
 
+
 def define_net_recombination(device, region):
-    """Assemble the final net recombination model."""
+    """Assembles all generation and recombination models into a single NetRecombination term."""
     print(f"    Assembling final NetRecombination for {region}...")
 
-    # FIXED: Removed G_TAT since TAT is already included in USRH
-    net_recombination_eq = "USRH + UAuger - OpticalGeneration - G_impact "
-    devsim.node_model(device=device, region=region, name="NetRecombination", equation=net_recombination_eq)
+    # Assemble all G-R mechanisms
+    # Generation terms (Optical, Impact) are SUBTRACTED from recombination (SRH, Auger)
+    net_recombination_eq = "USRH + UAuger - G_impact - OpticalGeneration"  # CORRECTED
 
-    # Derivatives for Newton solver
+    # This model is used by the continuity equations
+    devsim.node_model(device=device, region=region, name="NetRecombination",
+                      equation=net_recombination_eq)
+
+    # Derivatives are needed for the solver
     devsim.node_model(device=device, region=region, name="NetRecombination:Electrons",
                       equation=f"diff({net_recombination_eq}, Electrons)")
     devsim.node_model(device=device, region=region, name="NetRecombination:Holes",
                       equation=f"diff({net_recombination_eq}, Holes)")
 
-    # Charge coupling terms
+    # These are helper models for the continuity equations themselves
     devsim.node_model(device=device, region=region, name="eCharge_x_NetRecomb",
-                      equation="ElectronCharge * NetRecombination")
-    devsim.node_model(device=device, region=region, name="eCharge_x_NetRecomb:Electrons",
-                      equation="ElectronCharge * NetRecombination:Electrons")
-    devsim.node_model(device=device, region=region, name="eCharge_x_NetRecomb:Holes",
-                      equation="ElectronCharge * NetRecombination:Holes")
+                      equation=f"ElectronCharge * ({net_recombination_eq})")
     devsim.node_model(device=device, region=region, name="Neg_eCharge_x_NetRecomb",
-                      equation="-ElectronCharge * NetRecombination")
-    devsim.node_model(device=device, region=region, name="Neg_eCharge_x_NetRecomb:Electrons",
-                      equation="-ElectronCharge * NetRecombination:Electrons")
-    devsim.node_model(device=device, region=region, name="Neg_eCharge_x_NetRecomb:Holes",
-                      equation="-ElectronCharge * NetRecombination:Holes")
+                      equation=f"-ElectronCharge * ({net_recombination_eq})")
+
 
 def setup_photodiode_model(device, material_params, global_params):
     """Setup the full photodiode physical model and equations ."""
@@ -790,7 +788,7 @@ def run_iv_sweep(device, voltages, p_flux, material_params=None, wavelength_nm=N
             try:
                 devsim.solve(type="dc",
                              absolute_error=10,
-                             relative_error=1e-3,
+                             relative_error=1e-7,
                              maximum_iterations=300,
                              maximum_divergence=30)
 
@@ -809,7 +807,7 @@ def run_iv_sweep(device, voltages, p_flux, material_params=None, wavelength_nm=N
                     print("  Attempting recovery with relaxed parameters...")
                     devsim.solve(type="dc",
                                  absolute_error=10,
-                                 relative_error=5e-2,
+                                 relative_error=5e-7,
                                  maximum_iterations=500,
                                  maximum_divergence=50)
 
@@ -864,7 +862,7 @@ def run_cv_sweep_ac(device, voltages, freq_hz):
         devsim.set_parameter(device=device, name="anode_bias", value=v)
         print(f"Step {i + 1}/{len(voltages)}: Bias = {v:.2f} V")
         try:
-            devsim.solve(type="dc", absolute_error=100.0, relative_error=3e-2, maximum_iterations=200)
+            devsim.solve(type="dc", absolute_error=100.0, relative_error=3e-7, maximum_iterations=200)
             devsim.solve(type="ac", frequency=freq_hz)
             imag_i_e = devsim.get_contact_current(device=device, contact="anode",
                                                   equation="ElectronContinuityEquation")
@@ -903,7 +901,7 @@ def run_spectral_sweep(device, wavelengths_nm, qe_bias, incident_flux, dark_curr
 
         try:
             # Solve for the light condition at this wavelength
-            devsim.solve(type="dc", absolute_error=1.0, relative_error=1e-2, maximum_iterations=100)
+            devsim.solve(type="dc", absolute_error=10.0, relative_error=1e-7, maximum_iterations=100)
 
             # Get the light current
             e_current = devsim.get_contact_current(device=device, contact="anode",
@@ -1009,7 +1007,6 @@ def main():
     devsim.set_parameter(name="alpha", value=single_alpha)
     print(f"Using alpha = {single_alpha:.2e} 1/cm for single-point simulation at {WAVELENGTH_NM_SINGLE} nm")
 
-    dark_currents_single = run_iv_sweep(GLOBAL_PARAMS["device_name"], iv_voltages, p_flux=0.0)
 
     # Calculate reflectivity for the single wavelength
     reflectivity_single = get_reflectivity(WAVELENGTH_NM_SINGLE, SILICON_PARAMS)
@@ -1018,6 +1015,7 @@ def main():
         f"Reflectivity at {WAVELENGTH_NM_SINGLE} nm is {reflectivity_single:.2%}, Effective Flux: {effective_flux_single:.2e}")
 
     # Run sweeps
+
     dark_currents_single = run_iv_sweep(GLOBAL_PARAMS["device_name"], iv_voltages, p_flux=0.0)
     light_currents_single = run_iv_sweep(GLOBAL_PARAMS["device_name"], iv_voltages,
                                          p_flux=LIGHT_PHOTON_FLUX,
@@ -1061,6 +1059,10 @@ def main():
     plot_results(iv_voltages, dark_currents_single, light_currents_single, qe_vs_voltage,
                  cv_voltages, capacitances, wavelengths_nm_sweep, qe_spectral_results,
                  WAVELENGTH_NM_SINGLE, QE_BIAS)
+
+
+    print(f"dark_currents_single:",dark_currents_single)
+    print(f"light_currents_single:",light_currents_single)
 
 if __name__ == "__main__":
     main()
