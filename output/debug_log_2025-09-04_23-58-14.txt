@@ -1,0 +1,78 @@
+============================================================
+      PHOTODIODE SIMULATION DEBUGGING WORKFLOW
+============================================================
+
+--- [STEP 1] Loading Mesh and Initializing Device ---
+Loading mesh: output/photodiode_mesh.msh
+Physical group name anode has 0 Tetrahedra.
+Physical group name anode has 0 Triangles.
+Physical group name anode has 272 Lines.
+Physical group name anode has 273 Points.
+Physical group name cathode has 0 Tetrahedra.
+Physical group name cathode has 0 Triangles.
+Physical group name cathode has 40 Lines.
+Physical group name cathode has 41 Points.
+Physical group name n_region has 0 Tetrahedra.
+Physical group name n_region has 5906 Triangles.
+Physical group name n_region has 9009 Lines.
+Physical group name n_region has 3104 Points.
+Physical group name p_region has 0 Tetrahedra.
+Physical group name p_region has 5052 Triangles.
+Physical group name p_region has 7816 Lines.
+Physical group name p_region has 2765 Points.
+Physical group name pn_junction has 0 Tetrahedra.
+Physical group name pn_junction has 0 Triangles.
+Physical group name pn_junction has 196 Lines.
+Physical group name pn_junction has 197 Points.
+Device photodiode has 5672 coordinates with max index 5672
+Region n_region has 3104 nodes.
+Region p_region has 2765 nodes.
+Contact anode in region p_region with 273 nodes
+Contact cathode in region n_region with 41 nodes
+Adding interface pn_junction with 197, 197 nodes
+
+--- Mesh loading and device creation complete ---
+
+--- Running Verification Checks ---
+✅ Verification PASSED: Device structure is correct.
+
+=== VERIFYING MESH DIMENSIONS ===
+Device dimensions:
+  Width: 20.000 μm
+  Depth: 16.000 μm
+✅ Mesh dimensions are suitable for photodiode simulation
+
+--- [STEP 2] Defining Simplified Physics and Boundaries ---
+
+--- Setting up physics and materials ---
+Defined Gaussian p-implant (peak=1.0e+17) and uniform n-bulk (N_D=1.0e+15)
+Defining mobility for p_region...
+    Defining carrier statistics for p_region...
+Defining SRH lifetime for p_region...
+Defining mobility for n_region...
+    Defining carrier statistics for n_region...
+Defining SRH lifetime for n_region...
+
+--- Physics and doping defined successfully ---
+  Defining all boundary condition models...
+
+=== DEBUGGING DOPING PROFILE ===
+
+Region: p_region
+  Surface (y≈0): N_A=8.82e+16, N_D=1.00e+15, Net=-8.72e+16
+  Min/Max y: -1.000 to 0.000 μm
+  NetDoping range: -8.72e+16 to 1.00e+15
+
+Region: n_region
+  Surface (y≈0): N_A=0.00e+00, N_D=1.00e+15, Net=1.00e+15
+  Min/Max y: -16.000 to -1.000 μm
+  NetDoping range: 1.00e+15 to 1.00e+15
+
+--- [STEP 3] Solving for Initial Equilibrium ---
+  Solving for equilibrium...
+
+
+FATAL ERROR during simulation: Cannot find parameter "ThermalVoltage"
+
+
+--- Simulation script finished. ---
