@@ -11,7 +11,7 @@ WIDTH = 5.0   # Pixel width (um)
 DEPTH = 5.0   # Pixel depth (um)
 
 P_WIDTH = 4.0   # Width of the p+ region (contact implant)
-P_DEPTH = 0.05  # Depth of the p+ region = 50 nm (shallow implant)
+P_DEPTH = 0.5  # Depth of the p+ region = 50 nm (shallow implant)
 
 # --- Gap Parameter ---
 # Defines the size of the insulating gap between the contact and junction.

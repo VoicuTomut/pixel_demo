@@ -23,46 +23,24 @@ alpha = 1e4  # Units: 1/cm
 # ==============================================================================
 # STEP 1: INITIALIZATION AND MESH LOADING
 # ==============================================================================
-print(f"Loading mesh: {mesh_file}")
-if not os.path.exists(mesh_file):
-    raise FileNotFoundError(f"Mesh file not found at '{mesh_file}'. Please run create_mesh.py first.")
-devsim.create_gmsh_mesh(mesh=device_name, file=mesh_file)
-devsim.add_gmsh_region(mesh=device_name, gmsh_name="p_region", region="p_region", material="Silicon")
-devsim.add_gmsh_region(mesh=device_name, gmsh_name="n_region", region="n_region", material="Silicon")
-devsim.add_gmsh_contact(mesh=device_name, gmsh_name="anode", region="p_region", name="anode", material="metal")
-devsim.add_gmsh_contact(mesh=device_name, gmsh_name="cathode", region="n_region", name="cathode", material="metal")
-devsim.add_gmsh_interface(mesh=device_name, gmsh_name="pn_junction", region0="p_region", region1="n_region",
-                          name="pn_junction")
-devsim.finalize_mesh(mesh=device_name)
-devsim.create_device(mesh=device_name, device=device_name)
-print("\n--- Step 1 complete: Mesh loading and device creation ---")
+from pixi import  initialize_device_and_mesh, debug_device_and_mesh, print_debug_summary
 
-# --- VERIFICATION for Step 1 ---
-print("\n--- Running Verification Checks for Step 1 ---")
-try:
-    device_list = devsim.get_device_list()
-    region_list = devsim.get_region_list(device=device_name)
-    contact_list = devsim.get_contact_list(device=device_name)
-    interface_list = devsim.get_interface_list(device=device_name)
-    if (len(device_list) == 1 and len(region_list) == 2 and len(contact_list) == 2 and len(interface_list) == 1):
-        print("✅ Verification PASSED: Device structure (regions, contacts, interfaces) is correct.")
-    else:
-        print("❌ Verification FAILED: The device structure is not as expected.")
-except devsim.error as msg:
-    print(f"❌ An error occurred during Step 1 verification: {msg}")
-
+initialize_device_and_mesh(device_name, mesh_file)
+# Then run the debug analysis
+debug_info = debug_device_and_mesh(device_name, mesh_file)
+print_debug_summary(debug_info)
 
 # ==============================================================================
 # STEP 2: DEFINING PHYSICS AND MATERIAL PROPERTIES
 # ==============================================================================
 # This section is unchanged and correctly sets up the material parameters.
-def set_silicon_parameters(device, region):
+def set_silicon_parameters(device, region, material_descriptor):
     """Sets the basic material parameters for Silicon."""
-    devsim.set_parameter(device=device, region=region, name="Permittivity", value=11.9 * 8.854e-14)
-    devsim.set_parameter(device=device, region=region, name="IntrinsicCarrierDensity", value=1.0e10)
-    devsim.set_parameter(device=device, region=region, name="ElectronCharge", value=1.6e-19)
-    devsim.set_parameter(device=device, region=region, name="taun", value=1.0e-6)
-    devsim.set_parameter(device=device, region=region, name="taup", value=1.0e-6)
+    devsim.set_parameter(device=device, region=region, name="Permittivity", value= material_descriptor["Permittivity"]["value"] )
+    devsim.set_parameter(device=device, region=region, name="IntrinsicCarrierDensity", value=material_descriptor["IntrinsicCarrierDensity"]["value"])
+    devsim.set_parameter(device=device, region=region, name="ElectronCharge", value=material_descriptor["ElectronCharge"]["value"])
+    devsim.set_parameter(device=device, region=region, name="taun", value=material_descriptor["Tau"]["value"])
+    devsim.set_parameter(device=device, region=region, name="taup", value=material_descriptor["Tau"]["value"])
 
 
 def define_doping(device, p_doping, n_doping):
@@ -490,11 +468,11 @@ if __name__ == "__main__":
     WAVELENGTH_NM = 650
     qe_values = calculate_qe(dark_currents, light_currents, LIGHT_PHOTON_FLUX, DEVICE_WIDTH_CM, WAVELENGTH_NM)
 
-    # --- Step 6: Run C-V Simulation (Task 3) ---
-    print("\n--- STEP 6: Running C-V Simulation ---")
-    cv_voltages = np.linspace(0, -5, 21)
-
-    capacitances = run_cv_sweep(device_name, cv_voltages, freq_hz=1e6)
+    # # --- Step 6: Run C-V Simulation (Task 3) ---
+    # print("\n--- STEP 6: Running C-V Simulation ---")
+    # cv_voltages = np.linspace(0, -5, 21)
+    #
+    # capacitances = run_cv_sweep(device_name, cv_voltages, freq_hz=1e6)
 
     # --- Step 7: Visualize All Results ---
     print("\n--- STEP 7: Generating Plots ---")
@@ -530,19 +508,19 @@ if __name__ == "__main__":
                          yaxis_range=[0, 105])  # Set a clean y-axis range
     fig_qe.show()
 
-    # --- Interactive C-V and Mott-Schottky Plot ---
-    fig_cv = make_subplots(rows=1, cols=2, subplot_titles=("C-V @ 1 MHz", "Mott-Schottky Plot"))
-    valid_cv_indices = ~np.isnan(capacitances)
-    inv_C_squared = 1.0 / (capacitances ** 2)
+    # # --- Interactive C-V and Mott-Schottky Plot ---
+    # fig_cv = make_subplots(rows=1, cols=2, subplot_titles=("C-V @ 1 MHz", "Mott-Schottky Plot"))
+    # valid_cv_indices = ~np.isnan(capacitances)
+    # inv_C_squared = 1.0 / (capacitances ** 2)
+    #
+    # fig_cv.add_trace(go.Scatter(x=cv_voltages[valid_cv_indices], y=capacitances[valid_cv_indices] * 1e12,
+    #                             mode='lines+markers', name='Capacitance', marker_color='magenta'), row=1, col=1)
+    # fig_cv.add_trace(go.Scatter(x=cv_voltages[valid_cv_indices], y=inv_C_squared[valid_cv_indices],
+    #                             mode='lines+markers', name='1/C²', marker_color='darkturquoise'), row=1, col=2)
 
-    fig_cv.add_trace(go.Scatter(x=cv_voltages[valid_cv_indices], y=capacitances[valid_cv_indices] * 1e12,
-                                mode='lines+markers', name='Capacitance', marker_color='magenta'), row=1, col=1)
-    fig_cv.add_trace(go.Scatter(x=cv_voltages[valid_cv_indices], y=inv_C_squared[valid_cv_indices],
-                                mode='lines+markers', name='1/C²', marker_color='darkturquoise'), row=1, col=2)
-
-    fig_cv.update_xaxes(title_text="Anode Voltage (V)", row=1, col=1)
-    fig_cv.update_yaxes(title_text="Capacitance (pF/cm)", row=1, col=1)
-    fig_cv.update_xaxes(title_text="Anode Voltage (V)", row=1, col=2)
-    fig_cv.update_yaxes(title_text="1/C² (F⁻²cm²)", row=1, col=2)
-    fig_cv.update_layout(title_text="Capacitance Analysis (Interactive)", showlegend=False)
-    fig_cv.show()
+    # fig_cv.update_xaxes(title_text="Anode Voltage (V)", row=1, col=1)
+    # fig_cv.update_yaxes(title_text="Capacitance (pF/cm)", row=1, col=1)
+    # fig_cv.update_xaxes(title_text="Anode Voltage (V)", row=1, col=2)
+    # fig_cv.update_yaxes(title_text="1/C² (F⁻²cm²)", row=1, col=2)
+    # fig_cv.update_layout(title_text="Capacitance Analysis (Interactive)", showlegend=False)
+    # fig_cv.show()
