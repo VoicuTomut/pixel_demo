@@ -15,7 +15,7 @@ import devsim
 
 # Import custom modules
 from pixi.compute_qe import calculate_qe
-from pixi.doping_profile import define_doping
+from pixi.doping_profile import define_uniform_doping
 from pixi.mobility_model import define_mobility_models
 from pixi.set_material import set_material_parameters
 from pixi.physic_builder import build_physic_model
@@ -104,7 +104,7 @@ class PhotodiodeSimulator:
         print(f"  P-region doping: {self.p_doping:.1e} cm⁻³")
         print(f"  N-region doping: {self.n_doping:.1e} cm⁻³")
 
-        define_doping(
+        define_uniform_doping(
             device=self.device_name,
             p_doping=self.p_doping,
             n_doping=self.n_doping
