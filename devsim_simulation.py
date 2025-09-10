@@ -1,526 +1,409 @@
-# devsim_simulation.py
-# Fully corrected script maintaining the original structure.
+#!/usr/bin/env python3
+"""
+Photodiode Device Simulation using DEVSIM
+
+This module simulates a silicon photodiode device, calculating I-V characteristics,
+quantum efficiency, and other key parameters under various operating conditions.
+
+"""
+
+import numpy as np
+import plotly.graph_objects as go
+
 
 import devsim
-import os
-import numpy as np
-import matplotlib.pyplot as plt
 
-# ==============================================================================
-#                      SETUP GLOBAL PARAMETERS
-# ==============================================================================
-# --- Device and File Names ---
-device_name = "photodiode"
-mesh_file = "output/photodiode_mesh.msh"
-
-# --- Photodiode Simulation Parameters ---
-# Set photon_flux to 0.0 for a simulation in the dark.
-# Set photon_flux > 0.0 for a simulation under illumination.
-photon_flux = 0.0  # Units: photons/cm^2/s
-# Absorption coefficient for a given wavelength.
-alpha = 1e4  # Units: 1/cm
-
-# ==============================================================================
-# STEP 1: INITIALIZATION AND MESH LOADING
-# ==============================================================================
-from pixi import  initialize_device_and_mesh, debug_device_and_mesh, print_debug_summary
-
-initialize_device_and_mesh(device_name, mesh_file)
-# Then run the debug analysis
-debug_info = debug_device_and_mesh(device_name, mesh_file)
-print_debug_summary(debug_info)
-
-# ==============================================================================
-# STEP 2: DEFINING PHYSICS AND MATERIAL PROPERTIES
-# ==============================================================================
-# This section is unchanged and correctly sets up the material parameters.
-def set_silicon_parameters(device, region, material_descriptor):
-    """Sets the basic material parameters for Silicon."""
-    devsim.set_parameter(device=device, region=region, name="Permittivity", value= material_descriptor["Permittivity"]["value"] )
-    devsim.set_parameter(device=device, region=region, name="IntrinsicCarrierDensity", value=material_descriptor["IntrinsicCarrierDensity"]["value"])
-    devsim.set_parameter(device=device, region=region, name="ElectronCharge", value=material_descriptor["ElectronCharge"]["value"])
-    devsim.set_parameter(device=device, region=region, name="taun", value=material_descriptor["Tau"]["value"])
-    devsim.set_parameter(device=device, region=region, name="taup", value=material_descriptor["Tau"]["value"])
+# Import custom modules
+from pixi.compute_qe import calculate_qe
+from pixi.doping_profile import define_doping
+from pixi.mobility_model import define_mobility_models
+from pixi.set_material import set_material_parameters
+from pixi.physic_builder import build_physic_model
+from pixi.boundary import set_boundary
+from pixi.compute_iv import run_iv_sweep
+from pixi.solve_equilibrium import solve_equilibrium
+from pixi import initialize_device_and_mesh, debug_device_and_mesh, print_debug_summary
+from material_parameters import silicon_material_properties
 
 
-def define_doping(device, p_doping, n_doping):
-    """Defines the acceptor and donor concentrations for the device."""
-    devsim.node_model(device=device, region="p_region", name="Acceptors", equation=f"{p_doping}")
-    devsim.node_model(device=device, region="p_region", name="Donors", equation="0.0")
-    devsim.node_model(device=device, region="n_region", name="Acceptors", equation="0.0")
-    devsim.node_model(device=device, region="n_region", name="Donors", equation=f"{n_doping}")
-    for region in ["p_region", "n_region"]:
-        devsim.node_model(device=device, region=region, name="NetDoping", equation="Donors - Acceptors")
-    print(f"Defined doping: N_A = {p_doping:.1e} cm^-3, N_D = {n_doping:.1e} cm^-3")
-
-
-def define_mobility_models(device, region):
+class PhotodiodeSimulator:
     """
-    Defines doping-dependent mobility using the Caughey-Thomas model.
+    A comprehensive photodiode device simulator using DEVSIM.
+
+    This class encapsulates all the functionality needed to simulate
+    a silicon photodiode, including mesh setup, physics modeling,
+    and characterization measurements.
     """
-    devsim.node_model(device=device, region=region, name="TotalDoping", equation="abs(Acceptors) + abs(Donors)")
-    mu_max_n, mu_min_n, N_ref_n, alpha_n = 1417.0, 68.5, 1.10e17, 0.711
-    eqn_n = f"{mu_min_n} + ({mu_max_n} - {mu_min_n}) / (1 + (TotalDoping / {N_ref_n})^{alpha_n})"
-    devsim.node_model(device=device, region=region, name="ElectronMobility", equation=eqn_n)
-    mu_max_p, mu_min_p, N_ref_p, alpha_p = 470.5, 44.9, 2.23e17, 0.719
-    eqn_p = f"{mu_min_p} + ({mu_max_p} - {mu_min_p}) / (1 + (TotalDoping / {N_ref_p})^{alpha_p})"
-    devsim.node_model(device=device, region=region, name="HoleMobility", equation=eqn_p)
 
+    def __init__(self, device_name: str = "photodiode", mesh_file: str = "output/photodiode_mesh.msh"):
+        """Initialize the photodiode simulator."""
+        self.device_name = device_name
+        self.mesh_file = mesh_file
 
-print("\nSetting silicon material parameters...")
-set_silicon_parameters(device=device_name, region="p_region")
-set_silicon_parameters(device=device_name, region="n_region")
-define_doping(device=device_name, p_doping=1e15, n_doping=1e18)
-print("Defining doping-dependent mobility models...")
-define_mobility_models(device=device_name, region="p_region")
-define_mobility_models(device=device_name, region="n_region")
-print("\n--- Step 2 complete: Physics and doping defined ---")
+        # Simulation parameters
+        self.photon_flux = 0.0  # photons/cm²/s (0.0 for dark simulation)
+        self.absorption_coefficient = 1e4  # 1/cm
+        self.material_descriptor = silicon_material_properties
 
-# ==============================================================================
-# STEP 3: SETTING UP THE PHOTODIODE PHYSICAL MODEL AND EQUATIONS
-# ==============================================================================
-# This section is restored to its original detailed format, with only the typo corrected.
-print("--- STEP 3: Setting Up Full Photodiode Physical Model ---")
+        # Doping concentrations
+        self.p_doping = 1e15  # cm⁻³
+        self.n_doping = 1e18  # cm⁻³
 
-# --- Part A: Create Solution Variables ---
-print("  3A: Creating solution variables (Potential, Electrons, Holes)...")
-for region in ["p_region", "n_region"]:
-    devsim.node_solution(device=device_name, region=region, name="Potential")
-    devsim.node_solution(device=device_name, region=region, name="Electrons")
-    devsim.node_solution(device=device_name, region=region, name="Holes")
+        # Device geometry
+        self.device_width_cm = 4.0e-4  # cm
+        self.wavelength_nm = 650  # nm
 
-# --- Part B: Define ALL Bulk Physical Models ---
-print("  3B: Defining all bulk physical models...")
-devsim.set_parameter(name="ThermalVoltage", value=0.0259)
-devsim.set_parameter(name="PhotonFlux", value=photon_flux)
-devsim.set_parameter(name="alpha", value=alpha)
+        # Analysis parameters
+        self.light_photon_flux = 1e17  # photons/cm²/s
+        self.thermal_voltage = 0.0259  # V
 
-for region in ["p_region", "n_region"]:
-    devsim.edge_from_node_model(device=device_name, region=region, node_model="Potential")
-    devsim.edge_model(device=device_name, region=region, name="ElectricField",
-                      equation="(Potential@n0 - Potential@n1) * EdgeInverseLength")
-    devsim.edge_model(device=device_name, region=region, name="DField", equation="Permittivity * ElectricField")
-    devsim.edge_model(device=device_name, region=region, name="DField:Potential@n0",
-                      equation="Permittivity * EdgeInverseLength")
-    devsim.edge_model(device=device_name, region=region, name="DField:Potential@n1",
-                      equation="-Permittivity * EdgeInverseLength")
-    devsim.node_model(device=device_name, region=region, name="SpaceCharge",
-                      equation="ElectronCharge * (Holes - Electrons + NetDoping)")
-    devsim.edge_model(device=device_name, region=region, name="vdiff",
-                      equation="(Potential@n0 - Potential@n1)/ThermalVoltage")
-    devsim.edge_model(device=device_name, region=region, name="Bernoulli_vdiff", equation="B(vdiff)")
-    devsim.edge_model(device=device_name, region=region, name="Bernoulli_neg_vdiff", equation="B(-vdiff)")
-    devsim.edge_from_node_model(device=device_name, region=region, node_model="Electrons")
-    devsim.edge_from_node_model(device=device_name, region=region, node_model="Holes")
-    devsim.edge_from_node_model(device=device_name, region=region, node_model="ElectronMobility")
-    devsim.edge_from_node_model(device=device_name, region=region, node_model="HoleMobility")  # Typo was corrected here
-    devsim.edge_model(device=device_name, region=region, name="EdgeElectronMobility",
-                      equation="(ElectronMobility@n0 + ElectronMobility@n1) * 0.5")
-    devsim.edge_model(device=device_name, region=region, name="EdgeHoleMobility",
-                      equation="(HoleMobility@n0 + HoleMobility@n1) * 0.5")
-    electron_current_eq = "ElectronCharge * EdgeElectronMobility * ThermalVoltage * EdgeInverseLength * (Electrons@n1 * Bernoulli_neg_vdiff - Electrons@n0 * Bernoulli_vdiff)"
-    devsim.edge_model(device=device_name, region=region, name="ElectronCurrent", equation=electron_current_eq)
-    for v in ["Potential", "Electrons", "Holes"]:
-        for n in ["n0", "n1"]: devsim.edge_model(device=device_name, region=region, name=f"ElectronCurrent:{v}@{n}",
-                                                 equation=f"diff({electron_current_eq}, {v}@{n})")
-    hole_current_eq = "ElectronCharge * EdgeHoleMobility * ThermalVoltage * EdgeInverseLength * (Holes@n1 * Bernoulli_vdiff - Holes@n0 * Bernoulli_neg_vdiff)"
-    devsim.edge_model(device=device_name, region=region, name="HoleCurrent", equation=hole_current_eq)
-    for v in ["Potential", "Electrons", "Holes"]:
-        for n in ["n0", "n1"]: devsim.edge_model(device=device_name, region=region, name=f"HoleCurrent:{v}@{n}",
-                                                 equation=f"diff({hole_current_eq}, {v}@{n})")
+        # Storage for results
+        self.dark_currents = None
+        self.light_currents = None
+        self.qe_values = None
+        self.iv_voltages = None
 
-    devsim.node_model(device=device_name, region=region, name="n_i_squared", equation="IntrinsicCarrierDensity^2")
-    devsim.node_model(device=device_name, region=region, name="IntrinsicElectrons",
-                      equation="0.5*(NetDoping+(NetDoping^2+4*n_i_squared)^0.5)")
-    devsim.node_model(device=device_name, region=region, name="IntrinsicHoles",
-                      equation="0.5*(-NetDoping+(NetDoping^2+4*n_i_squared)^0.5)")
-    srh_eq = "(Electrons*Holes - n_i_squared) / (taup*(Electrons + IntrinsicElectrons) + taun*(Holes + IntrinsicHoles))"
-    devsim.node_model(device=device_name, region=region, name="USRH", equation=srh_eq)
-    # Use abs(y) for robustness, though (0-y) is also fine.
-    devsim.node_model(device=device_name, region=region, name="OpticalGeneration",
-                      equation="PhotonFlux * alpha * exp(-alpha * abs(y))")
+    def initialize_device(self) -> None:
+        """Initialize device mesh and verify setup."""
+        print("=" * 80)
+        print("INITIALIZING PHOTODIODE DEVICE")
+        print("=" * 80)
 
-    # Define the full NetRecombination equation in a single string for consistency
-    net_recombination_eq = "USRH - OpticalGeneration"
+        print(f"Device name: {self.device_name}")
+        print(f"Mesh file: {self.mesh_file}")
 
-    # Use the full string to define the model
-    devsim.node_model(device=device_name, region=region, name="NetRecombination", equation=net_recombination_eq)
+        # Initialize device and mesh
+        initialize_device_and_mesh(self.device_name, self.mesh_file)
 
-    # CRITICAL: Use the full string to define the derivatives
-    devsim.node_model(device=device_name, region=region, name="NetRecombination:Electrons",
-                      equation=f"diff({net_recombination_eq}, Electrons)")
-    devsim.node_model(device=device_name, region=region, name="NetRecombination:Holes",
-                      equation=f"diff({net_recombination_eq}, Holes)")
-    devsim.node_model(device=device_name, region=region, name="eCharge_x_NetRecomb",
-                      equation="ElectronCharge * NetRecombination")
-    devsim.node_model(device=device_name, region=region, name="eCharge_x_NetRecomb:Electrons",
-                      equation="ElectronCharge * NetRecombination:Electrons")
-    devsim.node_model(device=device_name, region=region, name="eCharge_x_NetRecomb:Holes",
-                      equation="ElectronCharge * NetRecombination:Holes")
+        # Debug and verify mesh
+        debug_info = debug_device_and_mesh(self.device_name, self.mesh_file)
+        print_debug_summary(debug_info)
 
-    devsim.node_model(device=device_name, region=region, name="Neg_eCharge_x_NetRecomb",
-                      equation="-ElectronCharge * NetRecombination")
-    devsim.node_model(device=device_name, region=region, name="Neg_eCharge_x_NetRecomb:Electrons",
-                      equation="-ElectronCharge * NetRecombination:Electrons")
-    devsim.node_model(device=device_name, region=region, name="Neg_eCharge_x_NetRecomb:Holes",
-                      equation="-ElectronCharge * NetRecombination:Holes")
+    def setup_materials(self) -> None:
+        """Configure material parameters for both regions."""
+        print("\n" + "-" * 60)
+        print("SETTING UP MATERIAL PARAMETERS")
+        print("-" * 60)
 
-# --- Part C: Define ALL Boundary Condition Models ---
-print("  3C: Defining all boundary condition models...")
-for contact in ["anode", "cathode"]:
-    devsim.set_parameter(device=device_name, name=f"{contact}_bias", value=0.0)
-    # Use f-strings to create unique names like "anode_potential_bc"
-    devsim.contact_node_model(device=device_name, contact=contact, name=f"{contact}_potential_bc",
-                              equation=f"Potential - {contact}_bias")
-    devsim.contact_node_model(device=device_name, contact=contact, name=f"{contact}_potential_bc:Potential", equation="1.0")
-    devsim.contact_node_model(device=device_name, contact=contact, name=f"{contact}_electrons_bc",
-                              equation="Electrons - IntrinsicElectrons")
-    devsim.contact_node_model(device=device_name, contact=contact, name=f"{contact}_electrons_bc:Electrons", equation="1.0")
-    devsim.contact_node_model(device=device_name, contact=contact, name=f"{contact}_holes_bc",
-                              equation="Holes - IntrinsicHoles")
-    devsim.contact_node_model(device=device_name, contact=contact, name=f"{contact}_holes_bc:Holes", equation="1.0")
+        regions = ["p_region", "n_region"]
 
+        for region in regions:
+            print(f"  Setting silicon parameters for {region}...")
+            set_material_parameters(
+                device=self.device_name,
+                region=region,
+                material_descriptor=self.material_descriptor
+            )
 
-for variable in ["Potential", "Electrons", "Holes"]:
-    devsim.interface_model(device=device_name, interface="pn_junction", name=f"{variable}_continuity",
-                           equation=f"{variable}@r0 - {variable}@r1")
-    devsim.interface_model(device=device_name, interface="pn_junction", name=f"{variable}_continuity:{variable}@r0",
-                           equation="1.0")
-    devsim.interface_model(device=device_name, interface="pn_junction", name=f"{variable}_continuity:{variable}@r1",
-                           equation="-1.0")
+    def setup_doping_and_mobility(self) -> None:
+        """Configure doping profiles and mobility models."""
+        print("\n" + "-" * 60)
+        print("SETTING UP DOPING AND MOBILITY")
+        print("-" * 60)
 
+        print(f"  P-region doping: {self.p_doping:.1e} cm⁻³")
+        print(f"  N-region doping: {self.n_doping:.1e} cm⁻³")
 
-# --- Part D: Solve for Initial Equilibrium (Staged Method with Correct Initial Guess) ---
-print("  3D: Solving for initial equilibrium state (two-step method)...")
-print("    Creating robust initial guess based on charge neutrality...")
-for region in ["p_region", "n_region"]:
-    devsim.set_node_values(device=device_name, region=region, name="Electrons", init_from="IntrinsicElectrons")
-    devsim.set_node_values(device=device_name, region=region, name="Holes", init_from="IntrinsicHoles")
-    devsim.node_model(device=device_name, region=region, name="InitialPotential",
-                      equation="ThermalVoltage * log(IntrinsicElectrons/IntrinsicCarrierDensity)")
-    devsim.set_node_values(device=device_name, region=region, name="Potential", init_from="InitialPotential")
+        define_doping(
+            device=self.device_name,
+            p_doping=self.p_doping,
+            n_doping=self.n_doping
+        )
 
-print("    Step 1/2: Assembling and solving for Potential only...")
-# FIRST: Setup Potential equation in regions
-for region in ["p_region", "n_region"]:
-    devsim.equation(device=device_name, region=region, name="PotentialEquation",
-                    variable_name="Potential",
-                    node_model="SpaceCharge",  # <-- THIS IS THE CRITICAL FIX
-                    edge_model="DField",
-                    variable_update="log_damp")
+        print("  Defining mobility models...")
+        for region in ["p_region", "n_region"]:
+            define_mobility_models(device=self.device_name, region=region)
 
-# Setup contact equations for Potential (without edge_charge_model initially)
-for contact in ["anode", "cathode"]:
-    devsim.contact_equation(device=device_name, contact=contact, name="PotentialEquation",
-                           node_model=f"{contact}_potential_bc")
+    def setup_physics_model(self) -> None:
+        """Set up the complete physics model for the photodiode."""
+        print("\n" + "=" * 80)
+        print("SETTING UP PHYSICS MODEL")
+        print("=" * 80)
 
-# Setup interface equation for Potential
-devsim.interface_equation(device=device_name, interface="pn_junction", name="PotentialEquation",
-                          interface_model="Potential_continuity", type="continuous")
+        # Create solution variables
+        print("  Creating solution variables (Potential, Electrons, Holes)...")
+        self._create_solution_variables()
 
-# Solve for Potential only
-devsim.solve(type="dc", absolute_error=1e-10, relative_error=1e-12, maximum_iterations=50)
+        # Build physics model
+        print("  Building bulk physics models...")
+        build_physic_model(
+            self.device_name,
+            self.photon_flux,
+            self.absorption_coefficient,
+            thermal_voltage=self.thermal_voltage
+        )
 
-print("    Updating carrier guess using Boltzmann statistics...")
-for region in ["p_region", "n_region"]:
-    devsim.node_model(device=device_name, region=region, name="UpdatedElectrons",
-                      equation="IntrinsicCarrierDensity*exp(Potential/ThermalVoltage)")
-    devsim.node_model(device=device_name, region=region, name="UpdatedHoles",
-                      equation="IntrinsicCarrierDensity*exp(-Potential/ThermalVoltage)")
-    devsim.set_node_values(device=device_name, region=region, name="Electrons", init_from="UpdatedElectrons")
-    devsim.set_node_values(device=device_name, region=region, name="Holes", init_from="UpdatedHoles")
+        # Set boundary conditions
+        print("  Setting boundary conditions...")
+        set_boundary(self.device_name)
 
-print("    Step 2/2: Assembling continuity equations and solving the full system...")
-# SECOND: Setup continuity equations in regions
-for region in ["p_region", "n_region"]:
-    # For d(n)/dt: div(Jn) = q(R-G). DEVSIM solves div(F) - S = 0.
-    # So F=Jn and S = q(R-G), which is our "eCharge_x_NetRecomb"
-    devsim.equation(device=device_name, region=region, name="ElectronContinuityEquation",
-                    variable_name="Electrons",
-                    node_model="eCharge_x_NetRecomb",
-                    edge_model="ElectronCurrent",
-                    variable_update="log_damp")
+        # Solve for equilibrium
+        print("  Solving for initial equilibrium...")
+        solve_equilibrium(self.device_name)
 
-    # For d(p)/dt: div(Jp) = -q(R-G). DEVSIM solves div(F) - S = 0.
-    # So F=Jp and S = -q(R-G), which is our "Neg_eCharge_x_NetRecomb"
-    devsim.equation(device=device_name, region=region, name="HoleContinuityEquation",
-                    variable_name="Holes",
-                    node_model="Neg_eCharge_x_NetRecomb",
-                    edge_model="HoleCurrent",
-                    variable_update="log_damp")
+        print("✅ Physics model setup complete!")
 
-# Setup interface equations for continuity
-devsim.interface_equation(device=device_name, interface="pn_junction", name="ElectronContinuityEquation",
-                          interface_model="Electrons_continuity", type="continuous")
-devsim.interface_equation(device=device_name, interface="pn_junction", name="HoleContinuityEquation",
-                          interface_model="Holes_continuity", type="continuous")
+    def _create_solution_variables(self) -> None:
+        """Create solution variables for both regions."""
+        variables = ["Potential", "Electrons", "Holes"]
+        regions = ["p_region", "n_region"]
 
-# CRITICAL: Setup ALL contact equations WITH edge_charge_model for Potential
-for contact in ["anode", "cathode"]:
-    devsim.contact_equation(device=device_name, contact=contact, name="PotentialEquation",
-                            node_model=f"{contact}_potential_bc",
-                            edge_charge_model="DField")  # THIS IS CRITICAL FOR C-V
-    devsim.contact_equation(device=device_name, contact=contact, name="ElectronContinuityEquation",
-                            node_model=f"{contact}_electrons_bc",
-                            edge_current_model="ElectronCurrent")
-    devsim.contact_equation(device=device_name, contact=contact, name="HoleContinuityEquation",
-                            node_model=f"{contact}_holes_bc",
-                            edge_current_model="HoleCurrent")
+        for region in regions:
+            for variable in variables:
+                devsim.node_solution(
+                    device=self.device_name,
+                    region=region,
+                    name=variable
+                )
 
-# print("\n--- Final Solve: Using a Ramping Strategy for Stability ---")
-# target_lifetime = 1e-6
-# ramp_lifetimes = [1e-10, 1e-9, 1e-8, 1e-7, target_lifetime]
-# for i, life in enumerate(ramp_lifetimes):
-#     print(f"Ramp Step {i + 1}/{len(ramp_lifetimes)}: Solving with taun/taup = {life:.1e} s")
-#     devsim.set_parameter(name="taun", value=life)
-#     devsim.set_parameter(name="taup", value=life)
-#     relative_tolerance = 1e-9 if life != target_lifetime else 1e-9
-#     devsim.solve(type="dc", absolute_error=5.0, relative_error=relative_tolerance, maximum_iterations=200)
+    def _generate_voltage_array(self) -> np.ndarray:
+        """Generate adaptive voltage stepping for better convergence."""
+        # Fine steps near zero for better resolution
+        initial_steps = np.linspace(0.0, -0.5, 30)
 
-print("\n✅ Step 3 complete: Full photodiode model is defined and solved for equilibrium.")
+        # Medium steps for moderate reverse bias
+        medium_steps = np.linspace(-0.6, -2.0, 15)
 
+        # Larger steps for high reverse bias
+        large_steps = np.linspace(-2.2, -5.0, 12)
 
-# ==============================================================================
-#                      HELPER FUNCTIONS FOR CHARACTERIZATION
-# ==============================================================================
-# The new simulation tasks are organized into functions for clarity.
+        # Combine and sort in reverse order (0V to -5V)
+        voltages = np.unique(np.concatenate([initial_steps, medium_steps, large_steps]))
+        return voltages[::-1]
 
-def run_iv_sweep(device, voltages, p_flux):
-    currents = []
-    devsim.set_parameter(name="PhotonFlux", value=p_flux)
-    if p_flux>0:
-        print(f"DEBUG: PhotonFlux set to {devsim.get_parameter(name='PhotonFlux')}")  # Add this line
+    def run_dark_current_simulation(self) -> np.ndarray:
+        """Run I-V sweep in dark conditions."""
+        print("\n" + "-" * 60)
+        print("RUNNING DARK CURRENT SIMULATION")
+        print("-" * 60)
 
-    for v in voltages:
-        print(f"\nSetting Anode Bias: {v:.3f} V")
-        devsim.set_parameter(device=device, name="anode_bias", value=v)
-        try:
-            # Add maximum_divergence and increase maximum_iterations
-            devsim.solve(type="dc", absolute_error=1e10, relative_error=10,
-                         maximum_iterations=400,  # Increased from 300
-                         maximum_divergence=10)  # New parameter
-            e_current = devsim.get_contact_current(device=device, contact="anode",
-                                                   equation="ElectronContinuityEquation")
-            h_current = devsim.get_contact_current(device=device, contact="anode", equation="HoleContinuityEquation")
-            currents.append(e_current + h_current)
-            print(f"✅ V = {v:.3f} V, Current = {currents[-1]:.4e} A/cm")
-        except devsim.error as msg:
-            # Catch the error, report it, and append a NaN
-            print(f"❌ CONVERGENCE FAILED at V = {v:.3f} V. Error: {msg}")
-            currents.append(float('nan'))
-            # Optional: break the loop if one failure is enough
-            break
+        self.iv_voltages = self._generate_voltage_array()
+        print(f"  Voltage range: {self.iv_voltages[0]:.1f}V to {self.iv_voltages[-1]:.1f}V")
+        print(f"  Number of points: {len(self.iv_voltages)}")
 
-    devsim.set_parameter(device=device, name="anode_bias", value=0.0)  # Reset bias at the end
-    return np.array(currents)
+        self.dark_currents = run_iv_sweep(
+            self.device_name,
+            self.iv_voltages,
+            p_flux=0.0
+        )
 
+        print("✅ Dark current simulation complete!")
+        return self.dark_currents
 
-def calculate_qe(dark_currents, light_currents, p_flux, device_width_cm, wavelength_nm):
-    """
-    Calculates the External Quantum Efficiency (QE) for the photodiode.
+    def run_photocurrent_simulation(self) -> np.ndarray:
+        """Run I-V sweep under illumination."""
+        print("\n" + "-" * 60)
+        print("RUNNING PHOTOCURRENT SIMULATION")
+        print("-" * 60)
 
-    Args:
-        dark_currents (np.array): Dark current density in A/cm.
-        light_currents (np.array): Light current density in A/cm.
-        p_flux (float): Incident photon flux in photons/cm²/s.
-        device_width_cm (float): The width of the device's top surface in cm.
-        wavelength_nm (float): The wavelength of the incident light in nm (for context, not used in calculation).
+        # Stabilize at reverse bias before ramping photon flux
+        print("  Stabilizing at reverse bias...")
+        devsim.set_parameter(
+            device=self.device_name,
+            name="anode_bias",
+            value=self.iv_voltages[-1]
+        )
+        devsim.solve(type="dc", absolute_error=1e10, relative_error=10)
 
-    Returns:
-        np.array: The calculated QE as a percentage (%).
-    """
-    # Physical constants
-    q = 1.602e-19  # Elementary charge in Coulombs
+        # Gradually ramp up photon flux for stability
+        print("  Ramping photon flux for stability...")
+        self._ramp_photon_flux()
 
-    photocurrent_density = np.abs(light_currents - dark_currents)  # A/cm²
-    electrons_per_sec_per_cm2 = photocurrent_density / q  # (e-/s)/cm²
-    photons_per_sec_per_cm2 = p_flux  # (photons/s)/cm²
-    qe = (electrons_per_sec_per_cm2 / photons_per_sec_per_cm2) * 100.0
+        # Run illuminated I-V sweep
+        print(f"  Running I-V sweep with flux = {self.light_photon_flux:.1e}")
+        self.light_currents = run_iv_sweep(
+            self.device_name,
+            self.iv_voltages,
+            p_flux=self.light_photon_flux
+        )
 
-    return qe
+        print("✅ Photocurrent simulation complete!")
+        return self.light_currents
 
+    def _ramp_photon_flux(self) -> None:
+        """Gradually increase photon flux for numerical stability."""
+        flux_ramp = np.logspace(12, np.log10(self.light_photon_flux), 6)
 
-def run_cv_sweep(device, voltages, freq_hz):
-    """
-    Calculates C-V using numerical differentiation of charge.
-    """
-    capacitances = []
-    DELTA_V = 0.001  # 1 mV step for numerical differentiation
+        for i, flux in enumerate(flux_ramp):
+            devsim.set_parameter(name="PhotonFlux", value=flux)
+            print(f"    Step {i + 1}/{len(flux_ramp)}: "
+                  f"PhotonFlux = {flux:.1e} @ V = {self.iv_voltages[-1]:.1f}V")
+            devsim.solve(
+                type="dc",
+                absolute_error=1e10,
+                relative_error=10,
+                maximum_iterations=100
+            )
 
-    print(f"\nStarting C-V sweep...")
+    def calculate_quantum_efficiency(self) -> np.ndarray:
+        """Calculate external quantum efficiency."""
+        print("\n" + "-" * 60)
+        print("CALCULATING QUANTUM EFFICIENCY")
+        print("-" * 60)
 
-    # Initial solve at starting voltage
-    devsim.set_parameter(device=device, name="anode_bias", value=voltages[0])
-    devsim.solve(type="dc", absolute_error=10.0, relative_error=1e-2, maximum_iterations=100)
+        if self.dark_currents is None or self.light_currents is None:
+            raise ValueError("Must run both dark and light I-V sweeps first!")
 
-    for i, v in enumerate(voltages):
-        print(f"Step {i + 1}/{len(voltages)}: Bias = {v:.2f} V")
+        self.qe_values, _ = calculate_qe(
+            self.dark_currents,
+            self.light_currents,
+            self.light_photon_flux,
+            self.device_width_cm,
+            self.wavelength_nm
+        )
 
-        try:
-            # Solve at V - DELTA_V/2
-            devsim.set_parameter(device=device, name="anode_bias", value=v - DELTA_V / 2.0)
-            devsim.solve(type="dc", absolute_error=10.0, relative_error=1e-2, maximum_iterations=100)
-            q1 = devsim.get_contact_charge(device=device, contact="anode", equation="PotentialEquation")
+        print(f"  Wavelength: {self.wavelength_nm} nm")
+        print(f"  Device width: {self.device_width_cm} cm")
+        print(f"  Max QE: {np.max(self.qe_values):.2f}%")
+        print("✅ Quantum efficiency calculation complete!")
 
-            # Solve at V + DELTA_V/2
-            devsim.set_parameter(device=device, name="anode_bias", value=v + DELTA_V / 2.0)
-            devsim.solve(type="dc", absolute_error=10.0, relative_error=1e-2, maximum_iterations=100)
-            q2 = devsim.get_contact_charge(device=device, contact="anode", equation="PotentialEquation")
+        return self.qe_values
 
-            # Calculate capacitance
-            C = abs(q2 - q1) / DELTA_V
-            capacitances.append(C)
+    def print_simulation_summary(self) -> None:
+        """Print detailed summary of simulation results."""
+        print("\n" + "=" * 80)
+        print("SIMULATION SUMMARY")
+        print("=" * 80)
 
-            print(f"  C = {C * 1e12:.3f} pF/cm (q1={q1:.3e} C/cm, q2={q2:.3e} C/cm)")
+        if self.dark_currents is not None and self.light_currents is not None:
+            max_current_diff = max(
+                self.dark_currents - self.light_currents,
+                key=abs
+            )
 
-        except devsim.error as msg:
-            print(f"  Failed at V = {v:.2f} V: {msg}")
-            capacitances.append(float('nan'))
+            print(f"Dark current range: {np.min(np.abs(self.dark_currents)):.2e} "
+                  f"to {np.max(np.abs(self.dark_currents)):.2e} A/cm")
+            print(f"Photocurrent range: {np.min(np.abs(self.light_currents)):.2e} "
+                  f"to {np.max(np.abs(self.light_currents)):.2e} A/cm")
+            print(f"Maximum current difference: {max_current_diff:.2e} A/cm")
 
-    # Reset bias
-    devsim.set_parameter(device=device, name="anode_bias", value=0.0)
-    return np.array(capacitances)
+            if self.qe_values is not None:
+                print(f"QE range: {np.min(self.qe_values):.2f}% to {np.max(self.qe_values):.2f}%")
 
+    def create_interactive_plots(self) -> None:
+        """Generate interactive plots using Plotly."""
+        print("\n" + "-" * 60)
+        print("GENERATING INTERACTIVE PLOTS")
+        print("-" * 60)
 
-def run_cv_sweep_ac(device, voltages, freq_hz):
-    """
-    Calculates C-V using the more robust small-signal AC analysis method.
-    This is the FINAL CORRECTED version.
-    """
-    capacitances = []
-    omega = 2.0 * np.pi * freq_hz  # Angular frequency (rad/s)
+        if self.iv_voltages is None:
+            raise ValueError("No simulation data available for plotting!")
 
-    print(f"\nStarting AC C-V sweep at {freq_hz / 1e6:.1f} MHz...")
+        # I-V Characteristics Plot
+        self._create_iv_plot()
 
-    for i, v in enumerate(voltages):
-        devsim.set_parameter(device=device, name="anode_bias", value=v)
-        print(f"Step {i + 1}/{len(voltages)}: Bias = {v:.2f} V")
+        # Quantum Efficiency Plot
+        if self.qe_values is not None:
+            self._create_qe_plot()
+
+    def _create_iv_plot(self) -> None:
+        """Create interactive I-V characteristics plot."""
+        fig = go.Figure()
+
+        if self.dark_currents is not None:
+            fig.add_trace(go.Scatter(
+                x=self.iv_voltages,
+                y=np.abs(self.dark_currents),
+                mode='lines+markers',
+                name='Dark Current',
+                marker_color='red',
+                line=dict(width=2)
+            ))
+
+        if self.light_currents is not None:
+            fig.add_trace(go.Scatter(
+                x=self.iv_voltages,
+                y=np.abs(self.light_currents),
+                mode='lines+markers',
+                name='Photocurrent',
+                marker_color='blue',
+                line=dict(width=2)
+            ))
+
+        fig.update_layout(
+            title=dict(
+                text="Photodiode I-V Characteristics",
+                x=0.5,
+                font=dict(size=16)
+            ),
+            xaxis_title="Anode Voltage (V)",
+            yaxis_title="Current Magnitude (A/cm)",
+            yaxis_type="log",
+            template="plotly_white",
+            hovermode="x unified"
+        )
+
+        fig.show()
+
+    def _create_qe_plot(self) -> None:
+        """Create interactive quantum efficiency plot."""
+        fig = go.Figure()
+
+        fig.add_trace(go.Scatter(
+            x=self.iv_voltages,
+            y=self.qe_values,
+            mode='lines+markers',
+            name='External QE',
+            marker_color='green',
+            line=dict(width=2)
+        ))
+
+        fig.update_layout(
+            title=dict(
+                text=f"External Quantum Efficiency @ {self.wavelength_nm} nm",
+                x=0.5,
+                font=dict(size=16)
+            ),
+            xaxis_title="Anode Voltage (V)",
+            yaxis_title="External Quantum Efficiency (%)",
+            yaxis_range=[0, 105],
+            template="plotly_white",
+            hovermode="x unified"
+        )
+
+        fig.show()
+
+    def run_complete_simulation(self) -> None:
+        """Run the complete photodiode characterization sequence."""
+        print("STARTING COMPLETE PHOTODIODE SIMULATION")
+        print("=" * 80)
 
         try:
-            # FIX 1: Use TIGHT tolerances to get a physically correct DC solution.
-            # This is the key to fixing the linear shape problem.
-            devsim.solve(type="dc", absolute_error=100.0, relative_error=3e-2, maximum_iterations=200)
+            # Setup phase
+            self.initialize_device()
+            self.setup_materials()
+            self.setup_doping_and_mobility()
+            self.setup_physics_model()
 
-            # Perform the small-signal AC analysis at this correct DC point.
-            devsim.solve(type="ac", frequency=freq_hz)
+            # Simulation phase
+            self.run_dark_current_simulation()
+            self.run_photocurrent_simulation()
+            self.calculate_quantum_efficiency()
 
-            # FIX 2: Use the original DC equation names to get the AC current.
-            # The simulator automatically returns the AC result after an AC solve.
-            imag_i_e = devsim.get_contact_current(device=device, contact="anode",
-                                                  equation="ElectronContinuityEquation")
-            imag_i_h = devsim.get_contact_current(device=device, contact="anode",
-                                                  equation="HoleContinuityEquation")
+            # Analysis phase
+            self.print_simulation_summary()
+            self.create_interactive_plots()
+
+            print("\n" + "=" * 80)
+            print("✅ SIMULATION COMPLETED SUCCESSFULLY!")
+            print("=" * 80)
+
+        except Exception as e:
+            print(f"\n❌ SIMULATION FAILED: {str(e)}")
+            raise
 
 
-            C = (imag_i_e + imag_i_h) / omega
-            capacitances.append(C)
-            print(f"  ✅ C = {C * 1e12:.4f} pF/cm")
+def main():
+    """Main execution function."""
+    # Create and configure simulator
+    simulator = PhotodiodeSimulator(
+        device_name="photodiode",
+        mesh_file="output/photodiode_mesh.msh"
+    )
 
-        except devsim.error as msg:
-            print(f"  ❌ Failed at V = {v:.2f} V: {msg}")
-            capacitances.append(float('nan'))
+    # Run complete simulation
+    simulator.run_complete_simulation()
 
-    devsim.set_parameter(device=device, name="anode_bias", value=0.0)
-    return np.array(capacitances)
 
-# ==============================================================================
-#                      MAIN SIMULATION AND VISUALIZATION
-# ==============================================================================
 if __name__ == "__main__":
-    # --- Step 4: Run I-V Sweeps (Tasks 1 & 2) ---
-    print("\n--- STEP 4: Running I-V Sweeps ---")
-
-    # Using adaptive voltage stepping for better convergence at high bias
-    initial_small_steps = np.linspace(0.0, -0.5, 30)  # 25 steps of -0.02 V
-    medium_steps = np.linspace(-0.6, -2.0, 15)  # 14 steps of -0.1 V
-    large_steps = np.linspace(-2.2, -5.0, 12)  # 11 steps of -0.2 V and one -0.3V
-    iv_voltages = np.unique(np.concatenate([initial_small_steps, medium_steps, large_steps]))
-    iv_voltages = iv_voltages[::-1]
-    print("iv_voltages:",iv_voltages)
-
-    LIGHT_PHOTON_FLUX = 1e17
-    print("  4A: Running Dark Current Simulation (Task 1)")
-    dark_currents = run_iv_sweep(device_name, iv_voltages, p_flux=0.0)
-    print("  4A Done !!")
-
-    print("\n--- Ramping up Photon Flux at initial reverse bias for stability ---")
-
-
-    devsim.set_parameter(device=device_name, name="anode_bias", value=iv_voltages[-1])  # Set bias to -5V
-    devsim.solve(type="dc", absolute_error=1e10, relative_error=10)
-
-    # Now ramp the flux at this reverse bias point
-    flux_ramp = np.logspace(12, np.log10(LIGHT_PHOTON_FLUX), 6)
-    for i, flux in enumerate(flux_ramp):
-        devsim.set_parameter(name="PhotonFlux", value=flux)
-        print(f"    Ramp Step {i + 1}/{len(flux_ramp)}: PhotonFlux = {flux:.1e} @ V = {iv_voltages[-1]:.1f}V")
-        devsim.solve(type="dc", absolute_error=1e10, relative_error=10, maximum_iterations=100)
-
-    print("\n--- Running Photocurrent Simulation (Task 2) ---")
-    light_currents = run_iv_sweep(device_name, iv_voltages, p_flux=LIGHT_PHOTON_FLUX)
-    print("  4B Done !!")
-
-
-
-    # --- Step 5: Post-Process for Quantum Efficiency (Task 4) ---
-    print("\n--- STEP 5: Calculating Quantum Efficiency ---")
-    DEVICE_WIDTH_CM = 4.0e-4
-    WAVELENGTH_NM = 650
-    qe_values = calculate_qe(dark_currents, light_currents, LIGHT_PHOTON_FLUX, DEVICE_WIDTH_CM, WAVELENGTH_NM)
-
-    # # --- Step 6: Run C-V Simulation (Task 3) ---
-    # print("\n--- STEP 6: Running C-V Simulation ---")
-    # cv_voltages = np.linspace(0, -5, 21)
-    #
-    # capacitances = run_cv_sweep(device_name, cv_voltages, freq_hz=1e6)
-
-    # --- Step 7: Visualize All Results ---
-    print("\n--- STEP 7: Generating Plots ---")
-
-    # --- ADD THIS DEBUGGING BLOCK ---
-    print("\n--- DEBUGGING QE DATA ---")
-    print(f"Light currents being used for QE (first 5 values): {light_currents[:5]}")
-    print(f"Dark currents being used for QE (first 5 values): {dark_currents[:5]}")
-    print(f"Resulting QE values to be plotted (first 5 values): {qe_values[:5]}")
-    print("\n Max dif max(abs(Dark- light ))):",max(dark_currents-light_currents, key=abs) )
-
-    import plotly.graph_objects as go
-    from plotly.subplots import make_subplots
-
-    # --- Interactive I-V Plot ---
-    fig_iv = go.Figure()
-    fig_iv.add_trace(go.Scatter(x=iv_voltages, y=np.abs(dark_currents), mode='lines+markers', name='Dark Current',
-                                marker_color='red'))
-    fig_iv.add_trace(go.Scatter(x=iv_voltages, y=np.abs(light_currents), mode='lines+markers', name='Photocurrent',
-                                marker_color='blue'))
-    fig_iv.update_layout(title_text="I-V Characteristics (Interactive)",
-                         xaxis_title="Anode Voltage (V)",
-                         yaxis_title="Current Magnitude (A/cm)",
-                         yaxis_type="log")
-    fig_iv.show()
-
-    # --- Interactive QE Plot ---
-    fig_qe = go.Figure()
-    fig_qe.add_trace(go.Scatter(x=iv_voltages, y=qe_values, mode='lines+markers', name='QE', marker_color='green'))
-    fig_qe.update_layout(title_text=f"QE @ {WAVELENGTH_NM} nm (Interactive)",
-                         xaxis_title="Anode Voltage (V)",
-                         yaxis_title="External Quantum Efficiency (%)",
-                         yaxis_range=[0, 105])  # Set a clean y-axis range
-    fig_qe.show()
-
-    # # --- Interactive C-V and Mott-Schottky Plot ---
-    # fig_cv = make_subplots(rows=1, cols=2, subplot_titles=("C-V @ 1 MHz", "Mott-Schottky Plot"))
-    # valid_cv_indices = ~np.isnan(capacitances)
-    # inv_C_squared = 1.0 / (capacitances ** 2)
-    #
-    # fig_cv.add_trace(go.Scatter(x=cv_voltages[valid_cv_indices], y=capacitances[valid_cv_indices] * 1e12,
-    #                             mode='lines+markers', name='Capacitance', marker_color='magenta'), row=1, col=1)
-    # fig_cv.add_trace(go.Scatter(x=cv_voltages[valid_cv_indices], y=inv_C_squared[valid_cv_indices],
-    #                             mode='lines+markers', name='1/C²', marker_color='darkturquoise'), row=1, col=2)
-
-    # fig_cv.update_xaxes(title_text="Anode Voltage (V)", row=1, col=1)
-    # fig_cv.update_yaxes(title_text="Capacitance (pF/cm)", row=1, col=1)
-    # fig_cv.update_xaxes(title_text="Anode Voltage (V)", row=1, col=2)
-    # fig_cv.update_yaxes(title_text="1/C² (F⁻²cm²)", row=1, col=2)
-    # fig_cv.update_layout(title_text="Capacitance Analysis (Interactive)", showlegend=False)
-    # fig_cv.show()
+    main()

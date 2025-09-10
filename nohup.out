@@ -3,6 +3,13 @@ Loading "libopenblas.dylib": MISSING DLL
 Loading "liblapack.dylib": ALL BLAS/LAPACK LOADED
 Skipping libblas.dylib
 loading UMFPACK 5.1 as direct solver
+STARTING COMPLETE PHOTODIODE SIMULATION
+================================================================================
+================================================================================
+INITIALIZING PHOTODIODE DEVICE
+================================================================================
+Device name: photodiode
+Mesh file: output/photodiode_mesh.msh
 Loading mesh: output/photodiode_mesh.msh
 Physical group name anode has 0 Tetrahedra.
 Physical group name anode has 0 Triangles.
@@ -73,15 +80,29 @@ Interfaces: 1
 Status: OK
 ------------------------------
 
-Setting silicon material parameters...
-Defined doping: N_A = 1.0e+15 cm^-3, N_D = 1.0e+18 cm^-3
-Defining doping-dependent mobility models...
+------------------------------------------------------------
+SETTING UP MATERIAL PARAMETERS
+------------------------------------------------------------
+  Setting silicon parameters for p_region...
+  Setting silicon parameters for n_region...
 
---- Step 2 complete: Physics and doping defined ---
---- STEP 3: Setting Up Full Photodiode Physical Model ---
-  3A: Creating solution variables (Potential, Electrons, Holes)...
+------------------------------------------------------------
+SETTING UP DOPING AND MOBILITY
+------------------------------------------------------------
+  P-region doping: 1.0e+15 cm⁻³
+  N-region doping: 1.0e+18 cm⁻³
+Defined doping: N_A = 1.0e+15 cm^-3, N_D = 1.0e+18 cm^-3
+  Defining mobility models...
+
+================================================================================
+SETTING UP PHYSICS MODEL
+================================================================================
+  Creating solution variables (Potential, Electrons, Holes)...
+  Building bulk physics models...
   3B: Defining all bulk physical models...
+  Setting boundary conditions...
   3C: Defining all boundary condition models...
+  Solving for initial equilibrium...
   3D: Solving for initial equilibrium state (two-step method)...
     Creating robust initial guess based on charge neutrality...
     Step 1/2: Assembling and solving for Potential only...
@@ -158,21 +179,13 @@ Warning: Replacing Contact Equation with Contact Equation of the same name.
 Contact: anode, Equation: PotentialEquation
 Warning: Replacing Contact Equation with Contact Equation of the same name.
 Contact: cathode, Equation: PotentialEquation
+✅ Physics model setup complete!
 
-✅ Step 3 complete: Full photodiode model is defined and solved for equilibrium.
-
---- STEP 4: Running I-V Sweeps ---
-iv_voltages: [ 0.         -0.01724138 -0.03448276 -0.05172414 -0.06896552 -0.0862069
- -0.10344828 -0.12068966 -0.13793103 -0.15517241 -0.17241379 -0.18965517
- -0.20689655 -0.22413793 -0.24137931 -0.25862069 -0.27586207 -0.29310345
- -0.31034483 -0.32758621 -0.34482759 -0.36206897 -0.37931034 -0.39655172
- -0.4137931  -0.43103448 -0.44827586 -0.46551724 -0.48275862 -0.5
- -0.6        -0.7        -0.8        -0.9        -1.         -1.1
- -1.2        -1.3        -1.4        -1.5        -1.6        -1.7
- -1.8        -1.9        -2.         -2.2        -2.45454545 -2.70909091
- -2.96363636 -3.21818182 -3.47272727 -3.72727273 -3.98181818 -4.23636364
- -4.49090909 -4.74545455 -5.        ]
-  4A: Running Dark Current Simulation (Task 1)
+------------------------------------------------------------
+RUNNING DARK CURRENT SIMULATION
+------------------------------------------------------------
+  Voltage range: 0.0V to -5.0V
+  Number of points: 57
 
 Setting Anode Bias: 0.000 V
 number of equations 111738
@@ -971,9 +984,12 @@ Iteration: 0
       Equation: "HoleContinuityEquation"	RelError: 1.21243e-10	AbsError: 1.21243e+00
       Equation: "PotentialEquation"	RelError: 4.20701e-02	AbsError: 7.71029e-01
 ✅ V = -5.000 V, Current = 2.2985e-02 A/cm
-  4A Done !!
+✅ Dark current simulation complete!
 
---- Ramping up Photon Flux at initial reverse bias for stability ---
+------------------------------------------------------------
+RUNNING PHOTOCURRENT SIMULATION
+------------------------------------------------------------
+  Stabilizing at reverse bias...
 number of equations 111738
 Iteration: 0
   Device: "photodiode"	RelError: 5.71775e-02	AbsError: 4.16567e+00
@@ -985,92 +1001,92 @@ Iteration: 0
       Equation: "ElectronContinuityEquation"	RelError: 6.90996e-11	AbsError: 6.90996e-01
       Equation: "HoleContinuityEquation"	RelError: 1.21248e-10	AbsError: 1.21248e+00
       Equation: "PotentialEquation"	RelError: 3.99361e-02	AbsError: 7.71029e-01
-    Ramp Step 1/6: PhotonFlux = 1.0e+12 @ V = -5.0V
+  Ramping photon flux for stability...
+    Step 1/6: PhotonFlux = 1.0e+12 @ V = -5.0V
 number of equations 111738
 Iteration: 0
-  Device: "photodiode"	RelError: 5.49144e-02	AbsError: 4.20421e+00
-    Region: "n_region"	RelError: 1.69492e-02	AbsError: 4.20421e+00
+  Device: "photodiode"	RelError: 5.49144e-02	AbsError: 4.19709e+00
+    Region: "n_region"	RelError: 1.69492e-02	AbsError: 4.19709e+00
       Equation: "ElectronContinuityEquation"	RelError: 1.16809e-10	AbsError: 1.16809e+00
-      Equation: "HoleContinuityEquation"	RelError: 2.24448e-10	AbsError: 2.24448e+00
+      Equation: "HoleContinuityEquation"	RelError: 2.23736e-10	AbsError: 2.23736e+00
       Equation: "PotentialEquation"	RelError: 1.69492e-02	AbsError: 7.91642e-01
-    Region: "p_region"	RelError: 3.79653e-02	AbsError: 2.74946e+00
-      Equation: "ElectronContinuityEquation"	RelError: 7.65948e-11	AbsError: 7.65948e-01
-      Equation: "HoleContinuityEquation"	RelError: 1.21248e-10	AbsError: 1.21248e+00
+    Region: "p_region"	RelError: 3.79653e-02	AbsError: 2.73289e+00
+      Equation: "ElectronContinuityEquation"	RelError: 7.49391e-11	AbsError: 7.49391e-01
+      Equation: "HoleContinuityEquation"	RelError: 1.21247e-10	AbsError: 1.21247e+00
       Equation: "PotentialEquation"	RelError: 3.79653e-02	AbsError: 7.71029e-01
-    Ramp Step 2/6: PhotonFlux = 1.0e+13 @ V = -5.0V
+    Step 2/6: PhotonFlux = 1.0e+13 @ V = -5.0V
 number of equations 111738
 Iteration: 0
-  Device: "photodiode"	RelError: 5.28030e-02	AbsError: 4.14858e+00
-    Region: "n_region"	RelError: 1.66667e-02	AbsError: 4.14858e+00
+  Device: "photodiode"	RelError: 5.28030e-02	AbsError: 4.14319e+00
+    Region: "n_region"	RelError: 1.66667e-02	AbsError: 4.14319e+00
       Equation: "ElectronContinuityEquation"	RelError: 1.16809e-10	AbsError: 1.16809e+00
-      Equation: "HoleContinuityEquation"	RelError: 2.18885e-10	AbsError: 2.18885e+00
+      Equation: "HoleContinuityEquation"	RelError: 2.18346e-10	AbsError: 2.18346e+00
       Equation: "PotentialEquation"	RelError: 1.66667e-02	AbsError: 7.91642e-01
-    Region: "p_region"	RelError: 3.61363e-02	AbsError: 2.80736e+00
-      Equation: "ElectronContinuityEquation"	RelError: 8.23912e-11	AbsError: 8.23912e-01
+    Region: "p_region"	RelError: 3.61363e-02	AbsError: 2.78956e+00
+      Equation: "ElectronContinuityEquation"	RelError: 8.06112e-11	AbsError: 8.06112e-01
       Equation: "HoleContinuityEquation"	RelError: 1.21242e-10	AbsError: 1.21242e+00
       Equation: "PotentialEquation"	RelError: 3.61363e-02	AbsError: 7.71029e-01
-    Ramp Step 3/6: PhotonFlux = 1.0e+14 @ V = -5.0V
+    Step 3/6: PhotonFlux = 1.0e+14 @ V = -5.0V
 number of equations 111738
 Iteration: 0
-  Device: "photodiode"	RelError: 5.08245e-02	AbsError: 4.18695e+00
-    Region: "n_region"	RelError: 1.63934e-02	AbsError: 4.18695e+00
+  Device: "photodiode"	RelError: 5.08245e-02	AbsError: 4.18359e+00
+    Region: "n_region"	RelError: 1.63934e-02	AbsError: 4.18359e+00
       Equation: "ElectronContinuityEquation"	RelError: 1.16809e-10	AbsError: 1.16809e+00
-      Equation: "HoleContinuityEquation"	RelError: 2.22722e-10	AbsError: 2.22722e+00
+      Equation: "HoleContinuityEquation"	RelError: 2.22386e-10	AbsError: 2.22386e+00
       Equation: "PotentialEquation"	RelError: 1.63934e-02	AbsError: 7.91642e-01
-    Region: "p_region"	RelError: 3.44311e-02	AbsError: 2.86649e+00
-      Equation: "ElectronContinuityEquation"	RelError: 8.83064e-11	AbsError: 8.83064e-01
+    Region: "p_region"	RelError: 3.44311e-02	AbsError: 2.84855e+00
+      Equation: "ElectronContinuityEquation"	RelError: 8.65127e-11	AbsError: 8.65127e-01
       Equation: "HoleContinuityEquation"	RelError: 1.21240e-10	AbsError: 1.21240e+00
       Equation: "PotentialEquation"	RelError: 3.44311e-02	AbsError: 7.71029e-01
-    Ramp Step 4/6: PhotonFlux = 1.0e+15 @ V = -5.0V
+    Step 4/6: PhotonFlux = 1.0e+15 @ V = -5.0V
 number of equations 111738
 Iteration: 0
-  Device: "photodiode"	RelError: 4.89630e-02	AbsError: 4.19584e+00
-    Region: "n_region"	RelError: 1.61290e-02	AbsError: 4.19584e+00
+  Device: "photodiode"	RelError: 4.89630e-02	AbsError: 4.32420e+00
+    Region: "n_region"	RelError: 1.61290e-02	AbsError: 4.32420e+00
       Equation: "ElectronContinuityEquation"	RelError: 1.16809e-10	AbsError: 1.16809e+00
-      Equation: "HoleContinuityEquation"	RelError: 2.23611e-10	AbsError: 2.23611e+00
+      Equation: "HoleContinuityEquation"	RelError: 2.36446e-10	AbsError: 2.36446e+00
       Equation: "PotentialEquation"	RelError: 1.61290e-02	AbsError: 7.91642e-01
-    Region: "p_region"	RelError: 3.28339e-02	AbsError: 2.92576e+00
-      Equation: "ElectronContinuityEquation"	RelError: 9.42343e-11	AbsError: 9.42343e-01
-      Equation: "HoleContinuityEquation"	RelError: 1.21239e-10	AbsError: 1.21239e+00
+    Region: "p_region"	RelError: 3.28339e-02	AbsError: 2.90738e+00
+      Equation: "ElectronContinuityEquation"	RelError: 9.24392e-11	AbsError: 9.24392e-01
+      Equation: "HoleContinuityEquation"	RelError: 1.21196e-10	AbsError: 1.21196e+00
       Equation: "PotentialEquation"	RelError: 3.28339e-02	AbsError: 7.71029e-01
-    Ramp Step 5/6: PhotonFlux = 1.0e+16 @ V = -5.0V
+    Step 5/6: PhotonFlux = 1.0e+16 @ V = -5.0V
 number of equations 111738
 Iteration: 0
-  Device: "photodiode"	RelError: 4.72042e-02	AbsError: 4.16667e+00
-    Region: "n_region"	RelError: 1.58730e-02	AbsError: 4.16667e+00
+  Device: "photodiode"	RelError: 4.72042e-02	AbsError: 4.17338e+00
+    Region: "n_region"	RelError: 1.58730e-02	AbsError: 4.17338e+00
       Equation: "ElectronContinuityEquation"	RelError: 1.16809e-10	AbsError: 1.16809e+00
-      Equation: "HoleContinuityEquation"	RelError: 2.20694e-10	AbsError: 2.20694e+00
+      Equation: "HoleContinuityEquation"	RelError: 2.21365e-10	AbsError: 2.21365e+00
       Equation: "PotentialEquation"	RelError: 1.58730e-02	AbsError: 7.91642e-01
-    Region: "p_region"	RelError: 3.13311e-02	AbsError: 2.98504e+00
-      Equation: "ElectronContinuityEquation"	RelError: 1.00164e-10	AbsError: 1.00164e+00
+    Region: "p_region"	RelError: 3.13311e-02	AbsError: 2.96709e+00
+      Equation: "ElectronContinuityEquation"	RelError: 9.83686e-11	AbsError: 9.83686e-01
       Equation: "HoleContinuityEquation"	RelError: 1.21237e-10	AbsError: 1.21237e+00
       Equation: "PotentialEquation"	RelError: 3.13311e-02	AbsError: 7.71029e-01
-    Ramp Step 6/6: PhotonFlux = 1.0e+17 @ V = -5.0V
+    Step 6/6: PhotonFlux = 1.0e+17 @ V = -5.0V
 number of equations 111738
 Iteration: 0
-  Device: "photodiode"	RelError: 4.55357e-02	AbsError: 4.18230e+00
-    Region: "n_region"	RelError: 1.56250e-02	AbsError: 4.18230e+00
+  Device: "photodiode"	RelError: 4.55357e-02	AbsError: 4.19201e+00
+    Region: "n_region"	RelError: 1.56250e-02	AbsError: 4.19201e+00
       Equation: "ElectronContinuityEquation"	RelError: 1.16809e-10	AbsError: 1.16809e+00
-      Equation: "HoleContinuityEquation"	RelError: 2.22256e-10	AbsError: 2.22256e+00
+      Equation: "HoleContinuityEquation"	RelError: 2.23228e-10	AbsError: 2.23228e+00
       Equation: "PotentialEquation"	RelError: 1.56250e-02	AbsError: 7.91642e-01
-    Region: "p_region"	RelError: 2.99107e-02	AbsError: 3.04433e+00
-      Equation: "ElectronContinuityEquation"	RelError: 1.06094e-10	AbsError: 1.06094e+00
+    Region: "p_region"	RelError: 2.99107e-02	AbsError: 3.02638e+00
+      Equation: "ElectronContinuityEquation"	RelError: 1.04299e-10	AbsError: 1.04299e+00
       Equation: "HoleContinuityEquation"	RelError: 1.21236e-10	AbsError: 1.21236e+00
       Equation: "PotentialEquation"	RelError: 2.99107e-02	AbsError: 7.71029e-01
-
---- Running Photocurrent Simulation (Task 2) ---
+  Running I-V sweep with flux = 1.0e+17
 DEBUG: PhotonFlux set to 1e+17
 
 Setting Anode Bias: 0.000 V
 number of equations 111738
 Iteration: 0
-  Device: "photodiode"	RelError: 5.26154e-02	AbsError: 4.15591e+00
-    Region: "n_region"	RelError: 1.53846e-02	AbsError: 4.15591e+00
+  Device: "photodiode"	RelError: 5.26154e-02	AbsError: 4.19233e+00
+    Region: "n_region"	RelError: 1.53846e-02	AbsError: 4.19233e+00
       Equation: "ElectronContinuityEquation"	RelError: 1.16809e-10	AbsError: 1.16809e+00
-      Equation: "HoleContinuityEquation"	RelError: 2.19618e-10	AbsError: 2.19618e+00
+      Equation: "HoleContinuityEquation"	RelError: 2.23260e-10	AbsError: 2.23260e+00
       Equation: "PotentialEquation"	RelError: 1.53846e-02	AbsError: 7.91642e-01
-    Region: "p_region"	RelError: 3.72308e-02	AbsError: 3.04399e+00
-      Equation: "ElectronContinuityEquation"	RelError: 1.06061e-10	AbsError: 1.06061e+00
+    Region: "p_region"	RelError: 3.72308e-02	AbsError: 3.02603e+00
+      Equation: "ElectronContinuityEquation"	RelError: 1.04265e-10	AbsError: 1.04265e+00
       Equation: "HoleContinuityEquation"	RelError: 1.21235e-10	AbsError: 1.21235e+00
       Equation: "PotentialEquation"	RelError: 3.72308e-02	AbsError: 7.71029e-01
 ✅ V = 0.000 V, Current = 2.6039e-02 A/cm
@@ -1078,13 +1094,13 @@ Iteration: 0
 Setting Anode Bias: -0.017 V
 number of equations 111738
 Iteration: 0
-  Device: "photodiode"	RelError: 5.34858e-02	AbsError: 4.16139e+00
-    Region: "n_region"	RelError: 1.51515e-02	AbsError: 4.16139e+00
+  Device: "photodiode"	RelError: 5.34858e-02	AbsError: 4.16985e+00
+    Region: "n_region"	RelError: 1.51515e-02	AbsError: 4.16985e+00
       Equation: "ElectronContinuityEquation"	RelError: 1.16809e-10	AbsError: 1.16809e+00
-      Equation: "HoleContinuityEquation"	RelError: 2.20166e-10	AbsError: 2.20166e+00
+      Equation: "HoleContinuityEquation"	RelError: 2.21012e-10	AbsError: 2.21012e+00
       Equation: "PotentialEquation"	RelError: 1.51515e-02	AbsError: 7.91642e-01
-    Region: "p_region"	RelError: 3.83342e-02	AbsError: 3.04380e+00
-      Equation: "ElectronContinuityEquation"	RelError: 1.06028e-10	AbsError: 1.06028e+00
+    Region: "p_region"	RelError: 3.83342e-02	AbsError: 3.02585e+00
+      Equation: "ElectronContinuityEquation"	RelError: 1.04232e-10	AbsError: 1.04232e+00
       Equation: "HoleContinuityEquation"	RelError: 1.21249e-10	AbsError: 1.21249e+00
       Equation: "PotentialEquation"	RelError: 3.83342e-02	AbsError: 7.71029e-01
 ✅ V = -0.017 V, Current = 2.6558e-02 A/cm
@@ -1092,13 +1108,13 @@ Iteration: 0
 Setting Anode Bias: -0.034 V
 number of equations 111738
 Iteration: 0
-  Device: "photodiode"	RelError: 5.44254e-02	AbsError: 4.18085e+00
-    Region: "n_region"	RelError: 1.49254e-02	AbsError: 4.18085e+00
+  Device: "photodiode"	RelError: 5.44254e-02	AbsError: 4.18623e+00
+    Region: "n_region"	RelError: 1.49254e-02	AbsError: 4.18623e+00
       Equation: "ElectronContinuityEquation"	RelError: 1.16809e-10	AbsError: 1.16809e+00
-      Equation: "HoleContinuityEquation"	RelError: 2.22111e-10	AbsError: 2.22111e+00
+      Equation: "HoleContinuityEquation"	RelError: 2.22650e-10	AbsError: 2.22650e+00
       Equation: "PotentialEquation"	RelError: 1.49254e-02	AbsError: 7.91642e-01
-    Region: "p_region"	RelError: 3.95000e-02	AbsError: 3.04361e+00
-      Equation: "ElectronContinuityEquation"	RelError: 1.05995e-10	AbsError: 1.05995e+00
+    Region: "p_region"	RelError: 3.95000e-02	AbsError: 3.02566e+00
+      Equation: "ElectronContinuityEquation"	RelError: 1.04200e-10	AbsError: 1.04200e+00
       Equation: "HoleContinuityEquation"	RelError: 1.21263e-10	AbsError: 1.21263e+00
       Equation: "PotentialEquation"	RelError: 3.95000e-02	AbsError: 7.71029e-01
 ✅ V = -0.034 V, Current = 2.7076e-02 A/cm
@@ -1106,13 +1122,13 @@ Iteration: 0
 Setting Anode Bias: -0.052 V
 number of equations 111738
 Iteration: 0
-  Device: "photodiode"	RelError: 5.54391e-02	AbsError: 4.23030e+00
-    Region: "n_region"	RelError: 1.47059e-02	AbsError: 4.23030e+00
+  Device: "photodiode"	RelError: 5.54391e-02	AbsError: 4.21002e+00
+    Region: "n_region"	RelError: 1.47059e-02	AbsError: 4.21002e+00
       Equation: "ElectronContinuityEquation"	RelError: 1.16809e-10	AbsError: 1.16809e+00
-      Equation: "HoleContinuityEquation"	RelError: 2.27057e-10	AbsError: 2.27057e+00
+      Equation: "HoleContinuityEquation"	RelError: 2.25029e-10	AbsError: 2.25029e+00
       Equation: "PotentialEquation"	RelError: 1.47059e-02	AbsError: 7.91642e-01
-    Region: "p_region"	RelError: 4.07332e-02	AbsError: 3.04342e+00
-      Equation: "ElectronContinuityEquation"	RelError: 1.05963e-10	AbsError: 1.05963e+00
+    Region: "p_region"	RelError: 4.07332e-02	AbsError: 3.02546e+00
+      Equation: "ElectronContinuityEquation"	RelError: 1.04168e-10	AbsError: 1.04168e+00
       Equation: "HoleContinuityEquation"	RelError: 1.21276e-10	AbsError: 1.21276e+00
       Equation: "PotentialEquation"	RelError: 4.07332e-02	AbsError: 7.71029e-01
 ✅ V = -0.052 V, Current = 2.7593e-02 A/cm
@@ -1120,13 +1136,13 @@ Iteration: 0
 Setting Anode Bias: -0.069 V
 number of equations 111738
 Iteration: 0
-  Device: "photodiode"	RelError: 5.65319e-02	AbsError: 4.22997e+00
-    Region: "n_region"	RelError: 1.44928e-02	AbsError: 4.22997e+00
+  Device: "photodiode"	RelError: 5.65319e-02	AbsError: 4.17280e+00
+    Region: "n_region"	RelError: 1.44928e-02	AbsError: 4.17280e+00
       Equation: "ElectronContinuityEquation"	RelError: 1.16809e-10	AbsError: 1.16809e+00
-      Equation: "HoleContinuityEquation"	RelError: 2.27024e-10	AbsError: 2.27024e+00
+      Equation: "HoleContinuityEquation"	RelError: 2.21306e-10	AbsError: 2.21306e+00
       Equation: "PotentialEquation"	RelError: 1.44928e-02	AbsError: 7.91642e-01
-    Region: "p_region"	RelError: 4.20392e-02	AbsError: 3.04322e+00
-      Equation: "ElectronContinuityEquation"	RelError: 1.05931e-10	AbsError: 1.05931e+00
+    Region: "p_region"	RelError: 4.20392e-02	AbsError: 3.02527e+00
+      Equation: "ElectronContinuityEquation"	RelError: 1.04136e-10	AbsError: 1.04136e+00
       Equation: "HoleContinuityEquation"	RelError: 1.21288e-10	AbsError: 1.21288e+00
       Equation: "PotentialEquation"	RelError: 4.20392e-02	AbsError: 7.71029e-01
 ✅ V = -0.069 V, Current = 2.8109e-02 A/cm
@@ -1134,13 +1150,13 @@ Iteration: 0
 Setting Anode Bias: -0.086 V
 number of equations 111738
 Iteration: 0
-  Device: "photodiode"	RelError: 5.77098e-02	AbsError: 4.17042e+00
-    Region: "n_region"	RelError: 1.42857e-02	AbsError: 4.17042e+00
+  Device: "photodiode"	RelError: 5.77098e-02	AbsError: 4.17035e+00
+    Region: "n_region"	RelError: 1.42857e-02	AbsError: 4.17035e+00
       Equation: "ElectronContinuityEquation"	RelError: 1.16809e-10	AbsError: 1.16809e+00
-      Equation: "HoleContinuityEquation"	RelError: 2.21068e-10	AbsError: 2.21068e+00
+      Equation: "HoleContinuityEquation"	RelError: 2.21062e-10	AbsError: 2.21062e+00
       Equation: "PotentialEquation"	RelError: 1.42857e-02	AbsError: 7.91642e-01
-    Region: "p_region"	RelError: 4.34240e-02	AbsError: 3.04303e+00
-      Equation: "ElectronContinuityEquation"	RelError: 1.05899e-10	AbsError: 1.05899e+00
+    Region: "p_region"	RelError: 4.34240e-02	AbsError: 3.02507e+00
+      Equation: "ElectronContinuityEquation"	RelError: 1.04104e-10	AbsError: 1.04104e+00
       Equation: "HoleContinuityEquation"	RelError: 1.21301e-10	AbsError: 1.21301e+00
       Equation: "PotentialEquation"	RelError: 4.34240e-02	AbsError: 7.71029e-01
 ✅ V = -0.086 V, Current = 2.8624e-02 A/cm
@@ -1148,13 +1164,13 @@ Iteration: 0
 Setting Anode Bias: -0.103 V
 number of equations 111738
 Iteration: 0
-  Device: "photodiode"	RelError: 5.89789e-02	AbsError: 4.27372e+00
-    Region: "n_region"	RelError: 1.40845e-02	AbsError: 4.27372e+00
+  Device: "photodiode"	RelError: 5.89789e-02	AbsError: 4.21983e+00
+    Region: "n_region"	RelError: 1.40845e-02	AbsError: 4.21983e+00
       Equation: "ElectronContinuityEquation"	RelError: 1.16809e-10	AbsError: 1.16809e+00
-      Equation: "HoleContinuityEquation"	RelError: 2.31399e-10	AbsError: 2.31399e+00
+      Equation: "HoleContinuityEquation"	RelError: 2.26010e-10	AbsError: 2.26010e+00
       Equation: "PotentialEquation"	RelError: 1.40845e-02	AbsError: 7.91642e-01
-    Region: "p_region"	RelError: 4.48944e-02	AbsError: 3.04283e+00
-      Equation: "ElectronContinuityEquation"	RelError: 1.05868e-10	AbsError: 1.05868e+00
+    Region: "p_region"	RelError: 4.48944e-02	AbsError: 3.02488e+00
+      Equation: "ElectronContinuityEquation"	RelError: 1.04073e-10	AbsError: 1.04073e+00
       Equation: "HoleContinuityEquation"	RelError: 1.21312e-10	AbsError: 1.21312e+00
       Equation: "PotentialEquation"	RelError: 4.48944e-02	AbsError: 7.71029e-01
 ✅ V = -0.103 V, Current = 2.9139e-02 A/cm
@@ -1162,13 +1178,13 @@ Iteration: 0
 Setting Anode Bias: -0.121 V
 number of equations 111738
 Iteration: 0
-  Device: "photodiode"	RelError: 6.03463e-02	AbsError: 4.25559e+00
-    Region: "n_region"	RelError: 1.38889e-02	AbsError: 4.25559e+00
+  Device: "photodiode"	RelError: 6.03463e-02	AbsError: 4.21582e+00
+    Region: "n_region"	RelError: 1.38889e-02	AbsError: 4.21582e+00
       Equation: "ElectronContinuityEquation"	RelError: 1.16809e-10	AbsError: 1.16809e+00
-      Equation: "HoleContinuityEquation"	RelError: 2.29585e-10	AbsError: 2.29585e+00
+      Equation: "HoleContinuityEquation"	RelError: 2.25609e-10	AbsError: 2.25609e+00
       Equation: "PotentialEquation"	RelError: 1.38889e-02	AbsError: 7.91642e-01
-    Region: "p_region"	RelError: 4.64574e-02	AbsError: 3.04263e+00
-      Equation: "ElectronContinuityEquation"	RelError: 1.05837e-10	AbsError: 1.05837e+00
+    Region: "p_region"	RelError: 4.64574e-02	AbsError: 3.02468e+00
+      Equation: "ElectronContinuityEquation"	RelError: 1.04042e-10	AbsError: 1.04042e+00
       Equation: "HoleContinuityEquation"	RelError: 1.21323e-10	AbsError: 1.21323e+00
       Equation: "PotentialEquation"	RelError: 4.64574e-02	AbsError: 7.71029e-01
 ✅ V = -0.121 V, Current = 2.9653e-02 A/cm
@@ -1176,13 +1192,13 @@ Iteration: 0
 Setting Anode Bias: -0.138 V
 number of equations 111738
 Iteration: 0
-  Device: "photodiode"	RelError: 6.18196e-02	AbsError: 4.20343e+00
-    Region: "n_region"	RelError: 1.36986e-02	AbsError: 4.20343e+00
+  Device: "photodiode"	RelError: 6.18196e-02	AbsError: 4.19442e+00
+    Region: "n_region"	RelError: 1.36986e-02	AbsError: 4.19442e+00
       Equation: "ElectronContinuityEquation"	RelError: 1.16809e-10	AbsError: 1.16809e+00
-      Equation: "HoleContinuityEquation"	RelError: 2.24370e-10	AbsError: 2.24370e+00
+      Equation: "HoleContinuityEquation"	RelError: 2.23469e-10	AbsError: 2.23469e+00
       Equation: "PotentialEquation"	RelError: 1.36986e-02	AbsError: 7.91642e-01
-    Region: "p_region"	RelError: 4.81210e-02	AbsError: 3.04243e+00
-      Equation: "ElectronContinuityEquation"	RelError: 1.05806e-10	AbsError: 1.05806e+00
+    Region: "p_region"	RelError: 4.81210e-02	AbsError: 3.02448e+00
+      Equation: "ElectronContinuityEquation"	RelError: 1.04011e-10	AbsError: 1.04011e+00
       Equation: "HoleContinuityEquation"	RelError: 1.21334e-10	AbsError: 1.21334e+00
       Equation: "PotentialEquation"	RelError: 4.81210e-02	AbsError: 7.71029e-01
 ✅ V = -0.138 V, Current = 3.0165e-02 A/cm
@@ -1190,13 +1206,13 @@ Iteration: 0
 Setting Anode Bias: -0.155 V
 number of equations 111738
 Iteration: 0
-  Device: "photodiode"	RelError: 6.34072e-02	AbsError: 4.18542e+00
-    Region: "n_region"	RelError: 1.35135e-02	AbsError: 4.18542e+00
+  Device: "photodiode"	RelError: 6.34072e-02	AbsError: 4.24202e+00
+    Region: "n_region"	RelError: 1.35135e-02	AbsError: 4.24202e+00
       Equation: "ElectronContinuityEquation"	RelError: 1.16809e-10	AbsError: 1.16809e+00
-      Equation: "HoleContinuityEquation"	RelError: 2.22569e-10	AbsError: 2.22569e+00
+      Equation: "HoleContinuityEquation"	RelError: 2.28229e-10	AbsError: 2.28229e+00
       Equation: "PotentialEquation"	RelError: 1.35135e-02	AbsError: 7.91642e-01
-    Region: "p_region"	RelError: 4.98937e-02	AbsError: 3.04223e+00
-      Equation: "ElectronContinuityEquation"	RelError: 1.05776e-10	AbsError: 1.05776e+00
+    Region: "p_region"	RelError: 4.98937e-02	AbsError: 3.02428e+00
+      Equation: "ElectronContinuityEquation"	RelError: 1.03981e-10	AbsError: 1.03981e+00
       Equation: "HoleContinuityEquation"	RelError: 1.21345e-10	AbsError: 1.21345e+00
       Equation: "PotentialEquation"	RelError: 4.98937e-02	AbsError: 7.71029e-01
 ✅ V = -0.155 V, Current = 3.0677e-02 A/cm
@@ -1204,13 +1220,13 @@ Iteration: 0
 Setting Anode Bias: -0.172 V
 number of equations 111738
 Iteration: 0
-  Device: "photodiode"	RelError: 6.51183e-02	AbsError: 4.19932e+00
-    Region: "n_region"	RelError: 1.33333e-02	AbsError: 4.19932e+00
+  Device: "photodiode"	RelError: 6.51183e-02	AbsError: 4.19767e+00
+    Region: "n_region"	RelError: 1.33333e-02	AbsError: 4.19767e+00
       Equation: "ElectronContinuityEquation"	RelError: 1.16809e-10	AbsError: 1.16809e+00
-      Equation: "HoleContinuityEquation"	RelError: 2.23959e-10	AbsError: 2.23959e+00
+      Equation: "HoleContinuityEquation"	RelError: 2.23794e-10	AbsError: 2.23794e+00
       Equation: "PotentialEquation"	RelError: 1.33333e-02	AbsError: 7.91642e-01
-    Region: "p_region"	RelError: 5.17849e-02	AbsError: 3.04203e+00
-      Equation: "ElectronContinuityEquation"	RelError: 1.05746e-10	AbsError: 1.05746e+00
+    Region: "p_region"	RelError: 5.17849e-02	AbsError: 3.02408e+00
+      Equation: "ElectronContinuityEquation"	RelError: 1.03951e-10	AbsError: 1.03951e+00
       Equation: "HoleContinuityEquation"	RelError: 1.21355e-10	AbsError: 1.21355e+00
       Equation: "PotentialEquation"	RelError: 5.17849e-02	AbsError: 7.71029e-01
 ✅ V = -0.172 V, Current = 3.1188e-02 A/cm
@@ -1218,13 +1234,13 @@ Iteration: 0
 Setting Anode Bias: -0.190 V
 number of equations 111738
 Iteration: 0
-  Device: "photodiode"	RelError: 6.69625e-02	AbsError: 4.21185e+00
-    Region: "n_region"	RelError: 1.31579e-02	AbsError: 4.21185e+00
+  Device: "photodiode"	RelError: 6.69625e-02	AbsError: 4.18841e+00
+    Region: "n_region"	RelError: 1.31579e-02	AbsError: 4.18841e+00
       Equation: "ElectronContinuityEquation"	RelError: 1.16809e-10	AbsError: 1.16809e+00
-      Equation: "HoleContinuityEquation"	RelError: 2.25211e-10	AbsError: 2.25211e+00
+      Equation: "HoleContinuityEquation"	RelError: 2.22867e-10	AbsError: 2.22867e+00
       Equation: "PotentialEquation"	RelError: 1.31579e-02	AbsError: 7.91642e-01
-    Region: "p_region"	RelError: 5.38046e-02	AbsError: 3.04183e+00
-      Equation: "ElectronContinuityEquation"	RelError: 1.05716e-10	AbsError: 1.05716e+00
+    Region: "p_region"	RelError: 5.38046e-02	AbsError: 3.02388e+00
+      Equation: "ElectronContinuityEquation"	RelError: 1.03921e-10	AbsError: 1.03921e+00
       Equation: "HoleContinuityEquation"	RelError: 1.21364e-10	AbsError: 1.21364e+00
       Equation: "PotentialEquation"	RelError: 5.38046e-02	AbsError: 7.71029e-01
 ✅ V = -0.190 V, Current = 3.1698e-02 A/cm
@@ -1232,13 +1248,13 @@ Iteration: 0
 Setting Anode Bias: -0.207 V
 number of equations 111738
 Iteration: 0
-  Device: "photodiode"	RelError: 6.89502e-02	AbsError: 4.20641e+00
-    Region: "n_region"	RelError: 1.29870e-02	AbsError: 4.20641e+00
+  Device: "photodiode"	RelError: 6.89502e-02	AbsError: 4.21612e+00
+    Region: "n_region"	RelError: 1.29870e-02	AbsError: 4.21612e+00
       Equation: "ElectronContinuityEquation"	RelError: 1.16809e-10	AbsError: 1.16809e+00
-      Equation: "HoleContinuityEquation"	RelError: 2.24668e-10	AbsError: 2.24668e+00
+      Equation: "HoleContinuityEquation"	RelError: 2.25638e-10	AbsError: 2.25638e+00
       Equation: "PotentialEquation"	RelError: 1.29870e-02	AbsError: 7.91642e-01
-    Region: "p_region"	RelError: 5.59632e-02	AbsError: 3.04163e+00
-      Equation: "ElectronContinuityEquation"	RelError: 1.05687e-10	AbsError: 1.05687e+00
+    Region: "p_region"	RelError: 5.59632e-02	AbsError: 3.02368e+00
+      Equation: "ElectronContinuityEquation"	RelError: 1.03891e-10	AbsError: 1.03891e+00
       Equation: "HoleContinuityEquation"	RelError: 1.21373e-10	AbsError: 1.21373e+00
       Equation: "PotentialEquation"	RelError: 5.59632e-02	AbsError: 7.71029e-01
 ✅ V = -0.207 V, Current = 3.2207e-02 A/cm
@@ -1246,13 +1262,13 @@ Iteration: 0
 Setting Anode Bias: -0.224 V
 number of equations 111738
 Iteration: 0
-  Device: "photodiode"	RelError: 7.10923e-02	AbsError: 4.20388e+00
-    Region: "n_region"	RelError: 1.28205e-02	AbsError: 4.20388e+00
+  Device: "photodiode"	RelError: 7.10923e-02	AbsError: 4.25344e+00
+    Region: "n_region"	RelError: 1.28205e-02	AbsError: 4.25344e+00
       Equation: "ElectronContinuityEquation"	RelError: 1.16809e-10	AbsError: 1.16809e+00
-      Equation: "HoleContinuityEquation"	RelError: 2.24414e-10	AbsError: 2.24414e+00
+      Equation: "HoleContinuityEquation"	RelError: 2.29370e-10	AbsError: 2.29370e+00
       Equation: "PotentialEquation"	RelError: 1.28205e-02	AbsError: 7.91642e-01
-    Region: "p_region"	RelError: 5.82718e-02	AbsError: 3.04143e+00
-      Equation: "ElectronContinuityEquation"	RelError: 1.05657e-10	AbsError: 1.05657e+00
+    Region: "p_region"	RelError: 5.82718e-02	AbsError: 3.02347e+00
+      Equation: "ElectronContinuityEquation"	RelError: 1.03862e-10	AbsError: 1.03862e+00
       Equation: "HoleContinuityEquation"	RelError: 1.21382e-10	AbsError: 1.21382e+00
       Equation: "PotentialEquation"	RelError: 5.82718e-02	AbsError: 7.71029e-01
 ✅ V = -0.224 V, Current = 3.2714e-02 A/cm
@@ -1260,13 +1276,13 @@ Iteration: 0
 Setting Anode Bias: -0.241 V
 number of equations 111738
 Iteration: 0
-  Device: "photodiode"	RelError: 7.33996e-02	AbsError: 4.26321e+00
-    Region: "n_region"	RelError: 1.26582e-02	AbsError: 4.26321e+00
+  Device: "photodiode"	RelError: 7.33996e-02	AbsError: 4.22245e+00
+    Region: "n_region"	RelError: 1.26582e-02	AbsError: 4.22245e+00
       Equation: "ElectronContinuityEquation"	RelError: 1.16809e-10	AbsError: 1.16809e+00
-      Equation: "HoleContinuityEquation"	RelError: 2.30348e-10	AbsError: 2.30348e+00
+      Equation: "HoleContinuityEquation"	RelError: 2.26272e-10	AbsError: 2.26272e+00
       Equation: "PotentialEquation"	RelError: 1.26582e-02	AbsError: 7.91642e-01
-    Region: "p_region"	RelError: 6.07414e-02	AbsError: 3.04122e+00
-      Equation: "ElectronContinuityEquation"	RelError: 1.05628e-10	AbsError: 1.05628e+00
+    Region: "p_region"	RelError: 6.07414e-02	AbsError: 3.02327e+00
+      Equation: "ElectronContinuityEquation"	RelError: 1.03833e-10	AbsError: 1.03833e+00
       Equation: "HoleContinuityEquation"	RelError: 1.21391e-10	AbsError: 1.21391e+00
       Equation: "PotentialEquation"	RelError: 6.07414e-02	AbsError: 7.71029e-01
 ✅ V = -0.241 V, Current = 3.3220e-02 A/cm
@@ -1274,13 +1290,13 @@ Iteration: 0
 Setting Anode Bias: -0.259 V
 number of equations 111738
 Iteration: 0
-  Device: "photodiode"	RelError: 7.58825e-02	AbsError: 4.26706e+00
-    Region: "n_region"	RelError: 1.25000e-02	AbsError: 4.26706e+00
+  Device: "photodiode"	RelError: 7.58825e-02	AbsError: 4.23064e+00
+    Region: "n_region"	RelError: 1.25000e-02	AbsError: 4.23064e+00
       Equation: "ElectronContinuityEquation"	RelError: 1.16809e-10	AbsError: 1.16809e+00
-      Equation: "HoleContinuityEquation"	RelError: 2.30732e-10	AbsError: 2.30732e+00
+      Equation: "HoleContinuityEquation"	RelError: 2.27090e-10	AbsError: 2.27090e+00
       Equation: "PotentialEquation"	RelError: 1.25000e-02	AbsError: 7.91642e-01
-    Region: "p_region"	RelError: 6.33825e-02	AbsError: 3.04102e+00
-      Equation: "ElectronContinuityEquation"	RelError: 1.05600e-10	AbsError: 1.05600e+00
+    Region: "p_region"	RelError: 6.33825e-02	AbsError: 3.02307e+00
+      Equation: "ElectronContinuityEquation"	RelError: 1.03804e-10	AbsError: 1.03804e+00
       Equation: "HoleContinuityEquation"	RelError: 1.21399e-10	AbsError: 1.21399e+00
       Equation: "PotentialEquation"	RelError: 6.33825e-02	AbsError: 7.71029e-01
 ✅ V = -0.259 V, Current = 3.3725e-02 A/cm
@@ -1288,13 +1304,13 @@ Iteration: 0
 Setting Anode Bias: -0.276 V
 number of equations 111738
 Iteration: 0
-  Device: "photodiode"	RelError: 7.85501e-02	AbsError: 4.20827e+00
-    Region: "n_region"	RelError: 1.23457e-02	AbsError: 4.20827e+00
+  Device: "photodiode"	RelError: 7.85501e-02	AbsError: 4.18400e+00
+    Region: "n_region"	RelError: 1.23457e-02	AbsError: 4.18400e+00
       Equation: "ElectronContinuityEquation"	RelError: 1.16809e-10	AbsError: 1.16809e+00
-      Equation: "HoleContinuityEquation"	RelError: 2.24854e-10	AbsError: 2.24854e+00
+      Equation: "HoleContinuityEquation"	RelError: 2.22426e-10	AbsError: 2.22426e+00
       Equation: "PotentialEquation"	RelError: 1.23457e-02	AbsError: 7.91642e-01
-    Region: "p_region"	RelError: 6.62045e-02	AbsError: 3.04081e+00
-      Equation: "ElectronContinuityEquation"	RelError: 1.05571e-10	AbsError: 1.05571e+00
+    Region: "p_region"	RelError: 6.62045e-02	AbsError: 3.02286e+00
+      Equation: "ElectronContinuityEquation"	RelError: 1.03776e-10	AbsError: 1.03776e+00
       Equation: "HoleContinuityEquation"	RelError: 1.21407e-10	AbsError: 1.21407e+00
       Equation: "PotentialEquation"	RelError: 6.62045e-02	AbsError: 7.71029e-01
 ✅ V = -0.276 V, Current = 3.4229e-02 A/cm
@@ -1302,13 +1318,13 @@ Iteration: 0
 Setting Anode Bias: -0.293 V
 number of equations 111738
 Iteration: 0
-  Device: "photodiode"	RelError: 8.14084e-02	AbsError: 4.17836e+00
-    Region: "n_region"	RelError: 1.21951e-02	AbsError: 4.17836e+00
+  Device: "photodiode"	RelError: 8.14084e-02	AbsError: 4.16659e+00
+    Region: "n_region"	RelError: 1.21951e-02	AbsError: 4.16659e+00
       Equation: "ElectronContinuityEquation"	RelError: 1.16809e-10	AbsError: 1.16809e+00
-      Equation: "HoleContinuityEquation"	RelError: 2.21863e-10	AbsError: 2.21863e+00
+      Equation: "HoleContinuityEquation"	RelError: 2.20685e-10	AbsError: 2.20685e+00
       Equation: "PotentialEquation"	RelError: 1.21951e-02	AbsError: 7.91642e-01
-    Region: "p_region"	RelError: 6.92133e-02	AbsError: 3.04061e+00
-      Equation: "ElectronContinuityEquation"	RelError: 1.05543e-10	AbsError: 1.05543e+00
+    Region: "p_region"	RelError: 6.92133e-02	AbsError: 3.02266e+00
+      Equation: "ElectronContinuityEquation"	RelError: 1.03748e-10	AbsError: 1.03748e+00
       Equation: "HoleContinuityEquation"	RelError: 1.21415e-10	AbsError: 1.21415e+00
       Equation: "PotentialEquation"	RelError: 6.92133e-02	AbsError: 7.71029e-01
 ✅ V = -0.293 V, Current = 3.4731e-02 A/cm
@@ -1316,13 +1332,13 @@ Iteration: 0
 Setting Anode Bias: -0.310 V
 number of equations 111738
 Iteration: 0
-  Device: "photodiode"	RelError: 8.44580e-02	AbsError: 4.19837e+00
-    Region: "n_region"	RelError: 1.20482e-02	AbsError: 4.19837e+00
+  Device: "photodiode"	RelError: 8.44580e-02	AbsError: 4.21667e+00
+    Region: "n_region"	RelError: 1.20482e-02	AbsError: 4.21667e+00
       Equation: "ElectronContinuityEquation"	RelError: 1.16809e-10	AbsError: 1.16809e+00
-      Equation: "HoleContinuityEquation"	RelError: 2.23864e-10	AbsError: 2.23864e+00
+      Equation: "HoleContinuityEquation"	RelError: 2.25694e-10	AbsError: 2.25694e+00
       Equation: "PotentialEquation"	RelError: 1.20482e-02	AbsError: 7.91642e-01
-    Region: "p_region"	RelError: 7.24098e-02	AbsError: 3.04040e+00
-      Equation: "ElectronContinuityEquation"	RelError: 1.05515e-10	AbsError: 1.05515e+00
+    Region: "p_region"	RelError: 7.24098e-02	AbsError: 3.02245e+00
+      Equation: "ElectronContinuityEquation"	RelError: 1.03720e-10	AbsError: 1.03720e+00
       Equation: "HoleContinuityEquation"	RelError: 1.21422e-10	AbsError: 1.21422e+00
       Equation: "PotentialEquation"	RelError: 7.24098e-02	AbsError: 7.71029e-01
 ✅ V = -0.310 V, Current = 3.5231e-02 A/cm
@@ -1330,13 +1346,13 @@ Iteration: 0
 Setting Anode Bias: -0.328 V
 number of equations 111738
 Iteration: 0
-  Device: "photodiode"	RelError: 8.76898e-02	AbsError: 4.17967e+00
-    Region: "n_region"	RelError: 1.19048e-02	AbsError: 4.17967e+00
+  Device: "photodiode"	RelError: 8.76898e-02	AbsError: 4.21117e+00
+    Region: "n_region"	RelError: 1.19048e-02	AbsError: 4.21117e+00
       Equation: "ElectronContinuityEquation"	RelError: 1.16809e-10	AbsError: 1.16809e+00
-      Equation: "HoleContinuityEquation"	RelError: 2.21993e-10	AbsError: 2.21993e+00
+      Equation: "HoleContinuityEquation"	RelError: 2.25144e-10	AbsError: 2.25144e+00
       Equation: "PotentialEquation"	RelError: 1.19048e-02	AbsError: 7.91642e-01
-    Region: "p_region"	RelError: 7.57851e-02	AbsError: 3.04020e+00
-      Equation: "ElectronContinuityEquation"	RelError: 1.05488e-10	AbsError: 1.05488e+00
+    Region: "p_region"	RelError: 7.57851e-02	AbsError: 3.02224e+00
+      Equation: "ElectronContinuityEquation"	RelError: 1.03692e-10	AbsError: 1.03692e+00
       Equation: "HoleContinuityEquation"	RelError: 1.21429e-10	AbsError: 1.21429e+00
       Equation: "PotentialEquation"	RelError: 7.57851e-02	AbsError: 7.71029e-01
 ✅ V = -0.328 V, Current = 3.5729e-02 A/cm
@@ -1344,13 +1360,13 @@ Iteration: 0
 Setting Anode Bias: -0.345 V
 number of equations 111738
 Iteration: 0
-  Device: "photodiode"	RelError: 9.10794e-02	AbsError: 4.27651e+00
-    Region: "n_region"	RelError: 1.17647e-02	AbsError: 4.27651e+00
+  Device: "photodiode"	RelError: 9.10794e-02	AbsError: 4.19313e+00
+    Region: "n_region"	RelError: 1.17647e-02	AbsError: 4.19313e+00
       Equation: "ElectronContinuityEquation"	RelError: 1.16809e-10	AbsError: 1.16809e+00
-      Equation: "HoleContinuityEquation"	RelError: 2.31677e-10	AbsError: 2.31677e+00
+      Equation: "HoleContinuityEquation"	RelError: 2.23340e-10	AbsError: 2.23340e+00
       Equation: "PotentialEquation"	RelError: 1.17647e-02	AbsError: 7.91642e-01
-    Region: "p_region"	RelError: 7.93146e-02	AbsError: 3.03999e+00
-      Equation: "ElectronContinuityEquation"	RelError: 1.05460e-10	AbsError: 1.05460e+00
+    Region: "p_region"	RelError: 7.93146e-02	AbsError: 3.02204e+00
+      Equation: "ElectronContinuityEquation"	RelError: 1.03665e-10	AbsError: 1.03665e+00
       Equation: "HoleContinuityEquation"	RelError: 1.21436e-10	AbsError: 1.21436e+00
       Equation: "PotentialEquation"	RelError: 7.93146e-02	AbsError: 7.71029e-01
 ✅ V = -0.345 V, Current = 3.6226e-02 A/cm
@@ -1358,13 +1374,13 @@ Iteration: 0
 Setting Anode Bias: -0.362 V
 number of equations 111738
 Iteration: 0
-  Device: "photodiode"	RelError: 9.45755e-02	AbsError: 4.22163e+00
-    Region: "n_region"	RelError: 1.16279e-02	AbsError: 4.22163e+00
+  Device: "photodiode"	RelError: 9.45755e-02	AbsError: 4.19943e+00
+    Region: "n_region"	RelError: 1.16279e-02	AbsError: 4.19943e+00
       Equation: "ElectronContinuityEquation"	RelError: 1.16809e-10	AbsError: 1.16809e+00
-      Equation: "HoleContinuityEquation"	RelError: 2.26189e-10	AbsError: 2.26189e+00
+      Equation: "HoleContinuityEquation"	RelError: 2.23970e-10	AbsError: 2.23970e+00
       Equation: "PotentialEquation"	RelError: 1.16279e-02	AbsError: 7.91642e-01
-    Region: "p_region"	RelError: 8.29476e-02	AbsError: 3.03978e+00
-      Equation: "ElectronContinuityEquation"	RelError: 1.05433e-10	AbsError: 1.05433e+00
+    Region: "p_region"	RelError: 8.29476e-02	AbsError: 3.02183e+00
+      Equation: "ElectronContinuityEquation"	RelError: 1.03638e-10	AbsError: 1.03638e+00
       Equation: "HoleContinuityEquation"	RelError: 1.21442e-10	AbsError: 1.21442e+00
       Equation: "PotentialEquation"	RelError: 8.29476e-02	AbsError: 7.71029e-01
 ✅ V = -0.362 V, Current = 3.6721e-02 A/cm
@@ -1372,13 +1388,13 @@ Iteration: 0
 Setting Anode Bias: -0.379 V
 number of equations 111738
 Iteration: 0
-  Device: "photodiode"	RelError: 9.80843e-02	AbsError: 4.19420e+00
-    Region: "n_region"	RelError: 1.14943e-02	AbsError: 4.19420e+00
+  Device: "photodiode"	RelError: 9.80843e-02	AbsError: 4.17753e+00
+    Region: "n_region"	RelError: 1.14943e-02	AbsError: 4.17753e+00
       Equation: "ElectronContinuityEquation"	RelError: 1.16809e-10	AbsError: 1.16809e+00
-      Equation: "HoleContinuityEquation"	RelError: 2.23446e-10	AbsError: 2.23446e+00
+      Equation: "HoleContinuityEquation"	RelError: 2.21780e-10	AbsError: 2.21780e+00
       Equation: "PotentialEquation"	RelError: 1.14943e-02	AbsError: 7.91642e-01
-    Region: "p_region"	RelError: 8.65900e-02	AbsError: 3.03957e+00
-      Equation: "ElectronContinuityEquation"	RelError: 1.05406e-10	AbsError: 1.05406e+00
+    Region: "p_region"	RelError: 8.65900e-02	AbsError: 3.02162e+00
+      Equation: "ElectronContinuityEquation"	RelError: 1.03611e-10	AbsError: 1.03611e+00
       Equation: "HoleContinuityEquation"	RelError: 1.21448e-10	AbsError: 1.21448e+00
       Equation: "PotentialEquation"	RelError: 8.65900e-02	AbsError: 7.71029e-01
 ✅ V = -0.379 V, Current = 3.7213e-02 A/cm
@@ -1386,13 +1402,13 @@ Iteration: 0
 Setting Anode Bias: -0.397 V
 number of equations 111738
 Iteration: 0
-  Device: "photodiode"	RelError: 1.01442e-01	AbsError: 4.23768e+00
-    Region: "n_region"	RelError: 1.13636e-02	AbsError: 4.23768e+00
+  Device: "photodiode"	RelError: 1.01442e-01	AbsError: 4.28537e+00
+    Region: "n_region"	RelError: 1.13636e-02	AbsError: 4.28537e+00
       Equation: "ElectronContinuityEquation"	RelError: 1.16809e-10	AbsError: 1.16809e+00
-      Equation: "HoleContinuityEquation"	RelError: 2.27795e-10	AbsError: 2.27795e+00
+      Equation: "HoleContinuityEquation"	RelError: 2.32563e-10	AbsError: 2.32563e+00
       Equation: "PotentialEquation"	RelError: 1.13636e-02	AbsError: 7.91642e-01
-    Region: "p_region"	RelError: 9.00782e-02	AbsError: 3.03936e+00
-      Equation: "ElectronContinuityEquation"	RelError: 1.05380e-10	AbsError: 1.05380e+00
+    Region: "p_region"	RelError: 9.00782e-02	AbsError: 3.02141e+00
+      Equation: "ElectronContinuityEquation"	RelError: 1.03584e-10	AbsError: 1.03584e+00
       Equation: "HoleContinuityEquation"	RelError: 1.21454e-10	AbsError: 1.21454e+00
       Equation: "PotentialEquation"	RelError: 9.00782e-02	AbsError: 7.71029e-01
 ✅ V = -0.397 V, Current = 3.7702e-02 A/cm
@@ -1400,13 +1416,13 @@ Iteration: 0
 Setting Anode Bias: -0.414 V
 number of equations 111738
 Iteration: 0
-  Device: "photodiode"	RelError: 1.04370e-01	AbsError: 4.21072e+00
-    Region: "n_region"	RelError: 1.12360e-02	AbsError: 4.21072e+00
+  Device: "photodiode"	RelError: 1.04370e-01	AbsError: 4.22706e+00
+    Region: "n_region"	RelError: 1.12360e-02	AbsError: 4.22706e+00
       Equation: "ElectronContinuityEquation"	RelError: 1.16809e-10	AbsError: 1.16809e+00
-      Equation: "HoleContinuityEquation"	RelError: 2.25099e-10	AbsError: 2.25099e+00
+      Equation: "HoleContinuityEquation"	RelError: 2.26732e-10	AbsError: 2.26732e+00
       Equation: "PotentialEquation"	RelError: 1.12360e-02	AbsError: 7.91642e-01
-    Region: "p_region"	RelError: 9.31338e-02	AbsError: 3.03915e+00
-      Equation: "ElectronContinuityEquation"	RelError: 1.05353e-10	AbsError: 1.05353e+00
+    Region: "p_region"	RelError: 9.31338e-02	AbsError: 3.02120e+00
+      Equation: "ElectronContinuityEquation"	RelError: 1.03558e-10	AbsError: 1.03558e+00
       Equation: "HoleContinuityEquation"	RelError: 1.21459e-10	AbsError: 1.21459e+00
       Equation: "PotentialEquation"	RelError: 9.31338e-02	AbsError: 7.71029e-01
 ✅ V = -0.414 V, Current = 3.8189e-02 A/cm
@@ -1414,13 +1430,13 @@ Iteration: 0
 Setting Anode Bias: -0.431 V
 number of equations 111738
 Iteration: 0
-  Device: "photodiode"	RelError: 1.06403e-01	AbsError: 4.19156e+00
-    Region: "n_region"	RelError: 1.11111e-02	AbsError: 4.19156e+00
+  Device: "photodiode"	RelError: 1.06403e-01	AbsError: 4.20425e+00
+    Region: "n_region"	RelError: 1.11111e-02	AbsError: 4.20425e+00
       Equation: "ElectronContinuityEquation"	RelError: 1.16809e-10	AbsError: 1.16809e+00
-      Equation: "HoleContinuityEquation"	RelError: 2.23183e-10	AbsError: 2.23183e+00
+      Equation: "HoleContinuityEquation"	RelError: 2.24452e-10	AbsError: 2.24452e+00
       Equation: "PotentialEquation"	RelError: 1.11111e-02	AbsError: 7.91642e-01
-    Region: "p_region"	RelError: 9.52924e-02	AbsError: 3.03894e+00
-      Equation: "ElectronContinuityEquation"	RelError: 1.05327e-10	AbsError: 1.05327e+00
+    Region: "p_region"	RelError: 9.52924e-02	AbsError: 3.02099e+00
+      Equation: "ElectronContinuityEquation"	RelError: 1.03532e-10	AbsError: 1.03532e+00
       Equation: "HoleContinuityEquation"	RelError: 1.21465e-10	AbsError: 1.21465e+00
       Equation: "PotentialEquation"	RelError: 9.52924e-02	AbsError: 7.71029e-01
 ✅ V = -0.431 V, Current = 3.8672e-02 A/cm
@@ -1428,13 +1444,13 @@ Iteration: 0
 Setting Anode Bias: -0.448 V
 number of equations 111738
 Iteration: 0
-  Device: "photodiode"	RelError: 1.06774e-01	AbsError: 4.19057e+00
-    Region: "n_region"	RelError: 1.09890e-02	AbsError: 4.19057e+00
+  Device: "photodiode"	RelError: 1.06774e-01	AbsError: 4.25209e+00
+    Region: "n_region"	RelError: 1.09890e-02	AbsError: 4.25209e+00
       Equation: "ElectronContinuityEquation"	RelError: 1.16809e-10	AbsError: 1.16809e+00
-      Equation: "HoleContinuityEquation"	RelError: 2.23084e-10	AbsError: 2.23084e+00
+      Equation: "HoleContinuityEquation"	RelError: 2.29236e-10	AbsError: 2.29236e+00
       Equation: "PotentialEquation"	RelError: 1.09890e-02	AbsError: 7.91642e-01
-    Region: "p_region"	RelError: 9.57847e-02	AbsError: 3.03873e+00
-      Equation: "ElectronContinuityEquation"	RelError: 1.05301e-10	AbsError: 1.05301e+00
+    Region: "p_region"	RelError: 9.57847e-02	AbsError: 3.02078e+00
+      Equation: "ElectronContinuityEquation"	RelError: 1.03506e-10	AbsError: 1.03506e+00
       Equation: "HoleContinuityEquation"	RelError: 1.21469e-10	AbsError: 1.21469e+00
       Equation: "PotentialEquation"	RelError: 9.57847e-02	AbsError: 7.71029e-01
 ✅ V = -0.448 V, Current = 3.9152e-02 A/cm
@@ -1442,13 +1458,13 @@ Iteration: 0
 Setting Anode Bias: -0.466 V
 number of equations 111738
 Iteration: 0
-  Device: "photodiode"	RelError: 1.04215e-01	AbsError: 4.20372e+00
-    Region: "n_region"	RelError: 1.08696e-02	AbsError: 4.20372e+00
+  Device: "photodiode"	RelError: 1.04215e-01	AbsError: 4.20888e+00
+    Region: "n_region"	RelError: 1.08696e-02	AbsError: 4.20888e+00
       Equation: "ElectronContinuityEquation"	RelError: 1.16809e-10	AbsError: 1.16809e+00
-      Equation: "HoleContinuityEquation"	RelError: 2.24399e-10	AbsError: 2.24399e+00
+      Equation: "HoleContinuityEquation"	RelError: 2.24914e-10	AbsError: 2.24914e+00
       Equation: "PotentialEquation"	RelError: 1.08696e-02	AbsError: 7.91642e-01
-    Region: "p_region"	RelError: 9.33455e-02	AbsError: 3.03852e+00
-      Equation: "ElectronContinuityEquation"	RelError: 1.05275e-10	AbsError: 1.05275e+00
+    Region: "p_region"	RelError: 9.33455e-02	AbsError: 3.02057e+00
+      Equation: "ElectronContinuityEquation"	RelError: 1.03480e-10	AbsError: 1.03480e+00
       Equation: "HoleContinuityEquation"	RelError: 1.21474e-10	AbsError: 1.21474e+00
       Equation: "PotentialEquation"	RelError: 9.33455e-02	AbsError: 7.71029e-01
 ✅ V = -0.466 V, Current = 3.9626e-02 A/cm
@@ -1456,13 +1472,13 @@ Iteration: 0
 Setting Anode Bias: -0.483 V
 number of equations 111738
 Iteration: 0
-  Device: "photodiode"	RelError: 9.66560e-02	AbsError: 4.23077e+00
-    Region: "n_region"	RelError: 1.07527e-02	AbsError: 4.23077e+00
+  Device: "photodiode"	RelError: 9.66560e-02	AbsError: 4.19983e+00
+    Region: "n_region"	RelError: 1.07527e-02	AbsError: 4.19983e+00
       Equation: "ElectronContinuityEquation"	RelError: 1.16809e-10	AbsError: 1.16809e+00
-      Equation: "HoleContinuityEquation"	RelError: 2.27103e-10	AbsError: 2.27103e+00
+      Equation: "HoleContinuityEquation"	RelError: 2.24010e-10	AbsError: 2.24010e+00
       Equation: "PotentialEquation"	RelError: 1.07527e-02	AbsError: 7.91642e-01
-    Region: "p_region"	RelError: 8.59033e-02	AbsError: 3.03830e+00
-      Equation: "ElectronContinuityEquation"	RelError: 1.05250e-10	AbsError: 1.05250e+00
+    Region: "p_region"	RelError: 8.59033e-02	AbsError: 3.02035e+00
+      Equation: "ElectronContinuityEquation"	RelError: 1.03455e-10	AbsError: 1.03455e+00
       Equation: "HoleContinuityEquation"	RelError: 1.21478e-10	AbsError: 1.21478e+00
       Equation: "PotentialEquation"	RelError: 8.59033e-02	AbsError: 7.71029e-01
 ✅ V = -0.483 V, Current = 4.0095e-02 A/cm
@@ -1470,13 +1486,13 @@ Iteration: 0
 Setting Anode Bias: -0.500 V
 number of equations 111738
 Iteration: 0
-  Device: "photodiode"	RelError: 8.07119e-02	AbsError: 4.21389e+00
-    Region: "n_region"	RelError: 1.06383e-02	AbsError: 4.21389e+00
+  Device: "photodiode"	RelError: 8.07119e-02	AbsError: 4.22475e+00
+    Region: "n_region"	RelError: 1.06383e-02	AbsError: 4.22475e+00
       Equation: "ElectronContinuityEquation"	RelError: 1.16809e-10	AbsError: 1.16809e+00
-      Equation: "HoleContinuityEquation"	RelError: 2.25415e-10	AbsError: 2.25415e+00
+      Equation: "HoleContinuityEquation"	RelError: 2.26502e-10	AbsError: 2.26502e+00
       Equation: "PotentialEquation"	RelError: 1.06383e-02	AbsError: 7.91642e-01
-    Region: "p_region"	RelError: 7.00736e-02	AbsError: 3.03809e+00
-      Equation: "ElectronContinuityEquation"	RelError: 1.05225e-10	AbsError: 1.05225e+00
+    Region: "p_region"	RelError: 7.00736e-02	AbsError: 3.02013e+00
+      Equation: "ElectronContinuityEquation"	RelError: 1.03429e-10	AbsError: 1.03429e+00
       Equation: "HoleContinuityEquation"	RelError: 1.21481e-10	AbsError: 1.21481e+00
       Equation: "PotentialEquation"	RelError: 7.00736e-02	AbsError: 7.71029e-01
 ✅ V = -0.500 V, Current = 4.0556e-02 A/cm
@@ -1484,13 +1500,13 @@ Iteration: 0
 Setting Anode Bias: -0.600 V
 number of equations 111738
 Iteration: 0
-  Device: "photodiode"	RelError: 5.84991e-02	AbsError: 4.24565e+00
-    Region: "n_region"	RelError: 1.05263e-02	AbsError: 4.24565e+00
+  Device: "photodiode"	RelError: 5.84991e-02	AbsError: 4.19407e+00
+    Region: "n_region"	RelError: 1.05263e-02	AbsError: 4.19407e+00
       Equation: "ElectronContinuityEquation"	RelError: 1.16809e-10	AbsError: 1.16809e+00
-      Equation: "HoleContinuityEquation"	RelError: 2.28591e-10	AbsError: 2.28591e+00
+      Equation: "HoleContinuityEquation"	RelError: 2.23434e-10	AbsError: 2.23434e+00
       Equation: "PotentialEquation"	RelError: 1.05263e-02	AbsError: 7.91642e-01
-    Region: "p_region"	RelError: 4.79728e-02	AbsError: 3.03786e+00
-      Equation: "ElectronContinuityEquation"	RelError: 1.05199e-10	AbsError: 1.05199e+00
+    Region: "p_region"	RelError: 4.79728e-02	AbsError: 3.01991e+00
+      Equation: "ElectronContinuityEquation"	RelError: 1.03404e-10	AbsError: 1.03404e+00
       Equation: "HoleContinuityEquation"	RelError: 1.21484e-10	AbsError: 1.21484e+00
       Equation: "PotentialEquation"	RelError: 4.79728e-02	AbsError: 7.71029e-01
 ✅ V = -0.600 V, Current = 4.0973e-02 A/cm
@@ -1498,13 +1514,13 @@ Iteration: 0
 Setting Anode Bias: -0.700 V
 number of equations 111738
 Iteration: 0
-  Device: "photodiode"	RelError: 8.28085e-02	AbsError: 4.21047e+00
-    Region: "n_region"	RelError: 1.04167e-02	AbsError: 4.21047e+00
+  Device: "photodiode"	RelError: 8.28085e-02	AbsError: 4.18748e+00
+    Region: "n_region"	RelError: 1.04167e-02	AbsError: 4.18748e+00
       Equation: "ElectronContinuityEquation"	RelError: 1.16809e-10	AbsError: 1.16809e+00
-      Equation: "HoleContinuityEquation"	RelError: 2.25074e-10	AbsError: 2.25074e+00
+      Equation: "HoleContinuityEquation"	RelError: 2.22775e-10	AbsError: 2.22775e+00
       Equation: "PotentialEquation"	RelError: 1.04167e-02	AbsError: 7.91642e-01
-    Region: "p_region"	RelError: 7.23918e-02	AbsError: 3.03762e+00
-      Equation: "ElectronContinuityEquation"	RelError: 1.05175e-10	AbsError: 1.05175e+00
+    Region: "p_region"	RelError: 7.23918e-02	AbsError: 3.01966e+00
+      Equation: "ElectronContinuityEquation"	RelError: 1.03379e-10	AbsError: 1.03379e+00
       Equation: "HoleContinuityEquation"	RelError: 1.21484e-10	AbsError: 1.21484e+00
       Equation: "PotentialEquation"	RelError: 7.23918e-02	AbsError: 7.71029e-01
 ✅ V = -0.700 V, Current = 4.1378e-02 A/cm
@@ -1512,13 +1528,13 @@ Iteration: 0
 Setting Anode Bias: -0.800 V
 number of equations 111738
 Iteration: 0
-  Device: "photodiode"	RelError: 8.90871e-02	AbsError: 4.36702e+00
-    Region: "n_region"	RelError: 1.03093e-02	AbsError: 4.36702e+00
+  Device: "photodiode"	RelError: 8.90871e-02	AbsError: 4.21014e+00
+    Region: "n_region"	RelError: 1.03093e-02	AbsError: 4.21014e+00
       Equation: "ElectronContinuityEquation"	RelError: 1.16809e-10	AbsError: 1.16809e+00
-      Equation: "HoleContinuityEquation"	RelError: 2.40728e-10	AbsError: 2.40728e+00
+      Equation: "HoleContinuityEquation"	RelError: 2.25040e-10	AbsError: 2.25040e+00
       Equation: "PotentialEquation"	RelError: 1.03093e-02	AbsError: 7.91642e-01
-    Region: "p_region"	RelError: 7.87778e-02	AbsError: 3.03737e+00
-      Equation: "ElectronContinuityEquation"	RelError: 1.05150e-10	AbsError: 1.05150e+00
+    Region: "p_region"	RelError: 7.87778e-02	AbsError: 3.01941e+00
+      Equation: "ElectronContinuityEquation"	RelError: 1.03355e-10	AbsError: 1.03355e+00
       Equation: "HoleContinuityEquation"	RelError: 1.21484e-10	AbsError: 1.21484e+00
       Equation: "PotentialEquation"	RelError: 7.87778e-02	AbsError: 7.71029e-01
 ✅ V = -0.800 V, Current = 4.1778e-02 A/cm
@@ -1526,13 +1542,13 @@ Iteration: 0
 Setting Anode Bias: -0.900 V
 number of equations 111738
 Iteration: 0
-  Device: "photodiode"	RelError: 9.00010e-02	AbsError: 4.21412e+00
-    Region: "n_region"	RelError: 1.02041e-02	AbsError: 4.21412e+00
+  Device: "photodiode"	RelError: 9.00010e-02	AbsError: 4.22249e+00
+    Region: "n_region"	RelError: 1.02041e-02	AbsError: 4.22249e+00
       Equation: "ElectronContinuityEquation"	RelError: 1.16809e-10	AbsError: 1.16809e+00
-      Equation: "HoleContinuityEquation"	RelError: 2.25439e-10	AbsError: 2.25439e+00
+      Equation: "HoleContinuityEquation"	RelError: 2.26276e-10	AbsError: 2.26276e+00
       Equation: "PotentialEquation"	RelError: 1.02041e-02	AbsError: 7.91642e-01
-    Region: "p_region"	RelError: 7.97969e-02	AbsError: 3.03711e+00
-      Equation: "ElectronContinuityEquation"	RelError: 1.05126e-10	AbsError: 1.05126e+00
+    Region: "p_region"	RelError: 7.97969e-02	AbsError: 3.01916e+00
+      Equation: "ElectronContinuityEquation"	RelError: 1.03330e-10	AbsError: 1.03330e+00
       Equation: "HoleContinuityEquation"	RelError: 1.21483e-10	AbsError: 1.21483e+00
       Equation: "PotentialEquation"	RelError: 7.97969e-02	AbsError: 7.71029e-01
 ✅ V = -0.900 V, Current = 4.2175e-02 A/cm
@@ -1540,13 +1556,13 @@ Iteration: 0
 Setting Anode Bias: -1.000 V
 number of equations 111738
 Iteration: 0
-  Device: "photodiode"	RelError: 8.86116e-02	AbsError: 4.23392e+00
-    Region: "n_region"	RelError: 1.01010e-02	AbsError: 4.23392e+00
+  Device: "photodiode"	RelError: 8.86116e-02	AbsError: 4.22510e+00
+    Region: "n_region"	RelError: 1.01010e-02	AbsError: 4.22510e+00
       Equation: "ElectronContinuityEquation"	RelError: 1.16809e-10	AbsError: 1.16809e+00
-      Equation: "HoleContinuityEquation"	RelError: 2.27419e-10	AbsError: 2.27419e+00
+      Equation: "HoleContinuityEquation"	RelError: 2.26536e-10	AbsError: 2.26536e+00
       Equation: "PotentialEquation"	RelError: 1.01010e-02	AbsError: 7.91642e-01
-    Region: "p_region"	RelError: 7.85106e-02	AbsError: 3.03686e+00
-      Equation: "ElectronContinuityEquation"	RelError: 1.05101e-10	AbsError: 1.05101e+00
+    Region: "p_region"	RelError: 7.85106e-02	AbsError: 3.01891e+00
+      Equation: "ElectronContinuityEquation"	RelError: 1.03306e-10	AbsError: 1.03306e+00
       Equation: "HoleContinuityEquation"	RelError: 1.21482e-10	AbsError: 1.21482e+00
       Equation: "PotentialEquation"	RelError: 7.85106e-02	AbsError: 7.71029e-01
 ✅ V = -1.000 V, Current = 4.2569e-02 A/cm
@@ -1554,13 +1570,13 @@ Iteration: 0
 Setting Anode Bias: -1.100 V
 number of equations 111738
 Iteration: 0
-  Device: "photodiode"	RelError: 8.61576e-02	AbsError: 4.19636e+00
-    Region: "n_region"	RelError: 1.00000e-02	AbsError: 4.19636e+00
+  Device: "photodiode"	RelError: 8.61576e-02	AbsError: 4.21348e+00
+    Region: "n_region"	RelError: 1.00000e-02	AbsError: 4.21348e+00
       Equation: "ElectronContinuityEquation"	RelError: 1.16809e-10	AbsError: 1.16809e+00
-      Equation: "HoleContinuityEquation"	RelError: 2.23662e-10	AbsError: 2.23662e+00
+      Equation: "HoleContinuityEquation"	RelError: 2.25374e-10	AbsError: 2.25374e+00
       Equation: "PotentialEquation"	RelError: 1.00000e-02	AbsError: 7.91642e-01
-    Region: "p_region"	RelError: 7.61576e-02	AbsError: 3.03661e+00
-      Equation: "ElectronContinuityEquation"	RelError: 1.05077e-10	AbsError: 1.05077e+00
+    Region: "p_region"	RelError: 7.61576e-02	AbsError: 3.01865e+00
+      Equation: "ElectronContinuityEquation"	RelError: 1.03282e-10	AbsError: 1.03282e+00
       Equation: "HoleContinuityEquation"	RelError: 1.21480e-10	AbsError: 1.21480e+00
       Equation: "PotentialEquation"	RelError: 7.61576e-02	AbsError: 7.71029e-01
 ✅ V = -1.100 V, Current = 4.2961e-02 A/cm
@@ -1568,13 +1584,13 @@ Iteration: 0
 Setting Anode Bias: -1.200 V
 number of equations 111738
 Iteration: 0
-  Device: "photodiode"	RelError: 8.32322e-02	AbsError: 4.19193e+00
-    Region: "n_region"	RelError: 9.90099e-03	AbsError: 4.19193e+00
+  Device: "photodiode"	RelError: 8.32322e-02	AbsError: 4.20330e+00
+    Region: "n_region"	RelError: 9.90099e-03	AbsError: 4.20330e+00
       Equation: "ElectronContinuityEquation"	RelError: 1.16809e-10	AbsError: 1.16809e+00
-      Equation: "HoleContinuityEquation"	RelError: 2.23220e-10	AbsError: 2.23220e+00
+      Equation: "HoleContinuityEquation"	RelError: 2.24357e-10	AbsError: 2.24357e+00
       Equation: "PotentialEquation"	RelError: 9.90099e-03	AbsError: 7.91642e-01
-    Region: "p_region"	RelError: 7.33312e-02	AbsError: 3.03635e+00
-      Equation: "ElectronContinuityEquation"	RelError: 1.05053e-10	AbsError: 1.05053e+00
+    Region: "p_region"	RelError: 7.33312e-02	AbsError: 3.01840e+00
+      Equation: "ElectronContinuityEquation"	RelError: 1.03258e-10	AbsError: 1.03258e+00
       Equation: "HoleContinuityEquation"	RelError: 1.21479e-10	AbsError: 1.21479e+00
       Equation: "PotentialEquation"	RelError: 7.33312e-02	AbsError: 7.71029e-01
 ✅ V = -1.200 V, Current = 4.3352e-02 A/cm
@@ -1582,13 +1598,13 @@ Iteration: 0
 Setting Anode Bias: -1.300 V
 number of equations 111738
 Iteration: 0
-  Device: "photodiode"	RelError: 8.01418e-02	AbsError: 4.18982e+00
-    Region: "n_region"	RelError: 9.80392e-03	AbsError: 4.18982e+00
+  Device: "photodiode"	RelError: 8.01418e-02	AbsError: 4.26674e+00
+    Region: "n_region"	RelError: 9.80392e-03	AbsError: 4.26674e+00
       Equation: "ElectronContinuityEquation"	RelError: 1.16809e-10	AbsError: 1.16809e+00
-      Equation: "HoleContinuityEquation"	RelError: 2.23009e-10	AbsError: 2.23009e+00
+      Equation: "HoleContinuityEquation"	RelError: 2.30700e-10	AbsError: 2.30700e+00
       Equation: "PotentialEquation"	RelError: 9.80392e-03	AbsError: 7.91642e-01
-    Region: "p_region"	RelError: 7.03379e-02	AbsError: 3.03610e+00
-      Equation: "ElectronContinuityEquation"	RelError: 1.05030e-10	AbsError: 1.05030e+00
+    Region: "p_region"	RelError: 7.03379e-02	AbsError: 3.01815e+00
+      Equation: "ElectronContinuityEquation"	RelError: 1.03235e-10	AbsError: 1.03235e+00
       Equation: "HoleContinuityEquation"	RelError: 1.21478e-10	AbsError: 1.21478e+00
       Equation: "PotentialEquation"	RelError: 7.03379e-02	AbsError: 7.71029e-01
 ✅ V = -1.300 V, Current = 4.3741e-02 A/cm
@@ -1596,13 +1612,13 @@ Iteration: 0
 Setting Anode Bias: -1.400 V
 number of equations 111738
 Iteration: 0
-  Device: "photodiode"	RelError: 7.70496e-02	AbsError: 4.25459e+00
-    Region: "n_region"	RelError: 9.70874e-03	AbsError: 4.25459e+00
+  Device: "photodiode"	RelError: 7.70496e-02	AbsError: 4.27099e+00
+    Region: "n_region"	RelError: 9.70874e-03	AbsError: 4.27099e+00
       Equation: "ElectronContinuityEquation"	RelError: 1.16809e-10	AbsError: 1.16809e+00
-      Equation: "HoleContinuityEquation"	RelError: 2.29486e-10	AbsError: 2.29486e+00
+      Equation: "HoleContinuityEquation"	RelError: 2.31126e-10	AbsError: 2.31126e+00
       Equation: "PotentialEquation"	RelError: 9.70874e-03	AbsError: 7.91642e-01
-    Region: "p_region"	RelError: 6.73408e-02	AbsError: 3.03585e+00
-      Equation: "ElectronContinuityEquation"	RelError: 1.05006e-10	AbsError: 1.05006e+00
+    Region: "p_region"	RelError: 6.73408e-02	AbsError: 3.01790e+00
+      Equation: "ElectronContinuityEquation"	RelError: 1.03211e-10	AbsError: 1.03211e+00
       Equation: "HoleContinuityEquation"	RelError: 1.21476e-10	AbsError: 1.21476e+00
       Equation: "PotentialEquation"	RelError: 6.73408e-02	AbsError: 7.71029e-01
 ✅ V = -1.400 V, Current = 4.4128e-02 A/cm
@@ -1610,13 +1626,13 @@ Iteration: 0
 Setting Anode Bias: -1.500 V
 number of equations 111738
 Iteration: 0
-  Device: "photodiode"	RelError: 7.40423e-02	AbsError: 4.18014e+00
-    Region: "n_region"	RelError: 9.61538e-03	AbsError: 4.18014e+00
+  Device: "photodiode"	RelError: 7.40423e-02	AbsError: 4.20156e+00
+    Region: "n_region"	RelError: 9.61538e-03	AbsError: 4.20156e+00
       Equation: "ElectronContinuityEquation"	RelError: 1.16809e-10	AbsError: 1.16809e+00
-      Equation: "HoleContinuityEquation"	RelError: 2.22041e-10	AbsError: 2.22041e+00
+      Equation: "HoleContinuityEquation"	RelError: 2.24182e-10	AbsError: 2.24182e+00
       Equation: "PotentialEquation"	RelError: 9.61538e-03	AbsError: 7.91642e-01
-    Region: "p_region"	RelError: 6.44269e-02	AbsError: 3.03561e+00
-      Equation: "ElectronContinuityEquation"	RelError: 1.04983e-10	AbsError: 1.04983e+00
+    Region: "p_region"	RelError: 6.44269e-02	AbsError: 3.01765e+00
+      Equation: "ElectronContinuityEquation"	RelError: 1.03188e-10	AbsError: 1.03188e+00
       Equation: "HoleContinuityEquation"	RelError: 1.21475e-10	AbsError: 1.21475e+00
       Equation: "PotentialEquation"	RelError: 6.44269e-02	AbsError: 7.71029e-01
 ✅ V = -1.500 V, Current = 4.4515e-02 A/cm
@@ -1624,13 +1640,13 @@ Iteration: 0
 Setting Anode Bias: -1.600 V
 number of equations 111738
 Iteration: 0
-  Device: "photodiode"	RelError: 7.11643e-02	AbsError: 4.24516e+00
-    Region: "n_region"	RelError: 9.52381e-03	AbsError: 4.24516e+00
+  Device: "photodiode"	RelError: 7.11643e-02	AbsError: 4.19205e+00
+    Region: "n_region"	RelError: 9.52381e-03	AbsError: 4.19205e+00
       Equation: "ElectronContinuityEquation"	RelError: 1.16809e-10	AbsError: 1.16809e+00
-      Equation: "HoleContinuityEquation"	RelError: 2.28542e-10	AbsError: 2.28542e+00
+      Equation: "HoleContinuityEquation"	RelError: 2.23232e-10	AbsError: 2.23232e+00
       Equation: "PotentialEquation"	RelError: 9.52381e-03	AbsError: 7.91642e-01
-    Region: "p_region"	RelError: 6.16405e-02	AbsError: 3.03536e+00
-      Equation: "ElectronContinuityEquation"	RelError: 1.04960e-10	AbsError: 1.04960e+00
+    Region: "p_region"	RelError: 6.16405e-02	AbsError: 3.01741e+00
+      Equation: "ElectronContinuityEquation"	RelError: 1.03165e-10	AbsError: 1.03165e+00
       Equation: "HoleContinuityEquation"	RelError: 1.21473e-10	AbsError: 1.21473e+00
       Equation: "PotentialEquation"	RelError: 6.16405e-02	AbsError: 7.71029e-01
 ✅ V = -1.600 V, Current = 4.4901e-02 A/cm
@@ -1638,13 +1654,13 @@ Iteration: 0
 Setting Anode Bias: -1.700 V
 number of equations 111738
 Iteration: 0
-  Device: "photodiode"	RelError: 6.84360e-02	AbsError: 4.28920e+00
-    Region: "n_region"	RelError: 9.43396e-03	AbsError: 4.28920e+00
+  Device: "photodiode"	RelError: 6.84360e-02	AbsError: 4.19479e+00
+    Region: "n_region"	RelError: 9.43396e-03	AbsError: 4.19479e+00
       Equation: "ElectronContinuityEquation"	RelError: 1.16809e-10	AbsError: 1.16809e+00
-      Equation: "HoleContinuityEquation"	RelError: 2.32947e-10	AbsError: 2.32947e+00
+      Equation: "HoleContinuityEquation"	RelError: 2.23506e-10	AbsError: 2.23506e+00
       Equation: "PotentialEquation"	RelError: 9.43396e-03	AbsError: 7.91642e-01
-    Region: "p_region"	RelError: 5.90020e-02	AbsError: 3.03511e+00
-      Equation: "ElectronContinuityEquation"	RelError: 1.04937e-10	AbsError: 1.04937e+00
+    Region: "p_region"	RelError: 5.90020e-02	AbsError: 3.01716e+00
+      Equation: "ElectronContinuityEquation"	RelError: 1.03142e-10	AbsError: 1.03142e+00
       Equation: "HoleContinuityEquation"	RelError: 1.21471e-10	AbsError: 1.21471e+00
       Equation: "PotentialEquation"	RelError: 5.90020e-02	AbsError: 7.71029e-01
 ✅ V = -1.700 V, Current = 4.5285e-02 A/cm
@@ -1652,13 +1668,13 @@ Iteration: 0
 Setting Anode Bias: -1.800 V
 number of equations 111738
 Iteration: 0
-  Device: "photodiode"	RelError: 6.58637e-02	AbsError: 4.23746e+00
-    Region: "n_region"	RelError: 9.34579e-03	AbsError: 4.23746e+00
+  Device: "photodiode"	RelError: 6.58637e-02	AbsError: 4.26035e+00
+    Region: "n_region"	RelError: 9.34579e-03	AbsError: 4.26035e+00
       Equation: "ElectronContinuityEquation"	RelError: 1.16809e-10	AbsError: 1.16809e+00
-      Equation: "HoleContinuityEquation"	RelError: 2.27773e-10	AbsError: 2.27773e+00
+      Equation: "HoleContinuityEquation"	RelError: 2.30062e-10	AbsError: 2.30062e+00
       Equation: "PotentialEquation"	RelError: 9.34579e-03	AbsError: 7.91642e-01
-    Region: "p_region"	RelError: 5.65179e-02	AbsError: 3.03487e+00
-      Equation: "ElectronContinuityEquation"	RelError: 1.04914e-10	AbsError: 1.04914e+00
+    Region: "p_region"	RelError: 5.65179e-02	AbsError: 3.01692e+00
+      Equation: "ElectronContinuityEquation"	RelError: 1.03119e-10	AbsError: 1.03119e+00
       Equation: "HoleContinuityEquation"	RelError: 1.21470e-10	AbsError: 1.21470e+00
       Equation: "PotentialEquation"	RelError: 5.65179e-02	AbsError: 7.71029e-01
 ✅ V = -1.800 V, Current = 4.5670e-02 A/cm
@@ -1666,13 +1682,13 @@ Iteration: 0
 Setting Anode Bias: -1.900 V
 number of equations 111738
 Iteration: 0
-  Device: "photodiode"	RelError: 6.34461e-02	AbsError: 4.23518e+00
-    Region: "n_region"	RelError: 9.25926e-03	AbsError: 4.23518e+00
+  Device: "photodiode"	RelError: 6.34461e-02	AbsError: 4.25506e+00
+    Region: "n_region"	RelError: 9.25926e-03	AbsError: 4.25506e+00
       Equation: "ElectronContinuityEquation"	RelError: 1.16809e-10	AbsError: 1.16809e+00
-      Equation: "HoleContinuityEquation"	RelError: 2.27545e-10	AbsError: 2.27545e+00
+      Equation: "HoleContinuityEquation"	RelError: 2.29532e-10	AbsError: 2.29532e+00
       Equation: "PotentialEquation"	RelError: 9.25926e-03	AbsError: 7.91642e-01
-    Region: "p_region"	RelError: 5.41869e-02	AbsError: 3.03463e+00
-      Equation: "ElectronContinuityEquation"	RelError: 1.04892e-10	AbsError: 1.04892e+00
+    Region: "p_region"	RelError: 5.41869e-02	AbsError: 3.01668e+00
+      Equation: "ElectronContinuityEquation"	RelError: 1.03097e-10	AbsError: 1.03097e+00
       Equation: "HoleContinuityEquation"	RelError: 1.21468e-10	AbsError: 1.21468e+00
       Equation: "PotentialEquation"	RelError: 5.41869e-02	AbsError: 7.71029e-01
 ✅ V = -1.900 V, Current = 4.6053e-02 A/cm
@@ -1680,13 +1696,13 @@ Iteration: 0
 Setting Anode Bias: -2.000 V
 number of equations 111738
 Iteration: 0
-  Device: "photodiode"	RelError: 6.11778e-02	AbsError: 4.20340e+00
-    Region: "n_region"	RelError: 9.17431e-03	AbsError: 4.20340e+00
+  Device: "photodiode"	RelError: 6.11778e-02	AbsError: 4.21111e+00
+    Region: "n_region"	RelError: 9.17431e-03	AbsError: 4.21111e+00
       Equation: "ElectronContinuityEquation"	RelError: 1.16809e-10	AbsError: 1.16809e+00
-      Equation: "HoleContinuityEquation"	RelError: 2.24367e-10	AbsError: 2.24367e+00
+      Equation: "HoleContinuityEquation"	RelError: 2.25137e-10	AbsError: 2.25137e+00
       Equation: "PotentialEquation"	RelError: 9.17431e-03	AbsError: 7.91642e-01
-    Region: "p_region"	RelError: 5.20035e-02	AbsError: 3.03439e+00
-      Equation: "ElectronContinuityEquation"	RelError: 1.04869e-10	AbsError: 1.04869e+00
+    Region: "p_region"	RelError: 5.20035e-02	AbsError: 3.01644e+00
+      Equation: "ElectronContinuityEquation"	RelError: 1.03074e-10	AbsError: 1.03074e+00
       Equation: "HoleContinuityEquation"	RelError: 1.21466e-10	AbsError: 1.21466e+00
       Equation: "PotentialEquation"	RelError: 5.20035e-02	AbsError: 7.71029e-01
 ✅ V = -2.000 V, Current = 4.6436e-02 A/cm
@@ -1694,13 +1710,13 @@ Iteration: 0
 Setting Anode Bias: -2.200 V
 number of equations 111738
 Iteration: 0
-  Device: "photodiode"	RelError: 6.14320e-02	AbsError: 4.23758e+00
-    Region: "n_region"	RelError: 9.09091e-03	AbsError: 4.23758e+00
+  Device: "photodiode"	RelError: 6.14320e-02	AbsError: 4.21760e+00
+    Region: "n_region"	RelError: 9.09091e-03	AbsError: 4.21760e+00
       Equation: "ElectronContinuityEquation"	RelError: 1.16809e-10	AbsError: 1.16809e+00
-      Equation: "HoleContinuityEquation"	RelError: 2.27784e-10	AbsError: 2.27784e+00
+      Equation: "HoleContinuityEquation"	RelError: 2.25786e-10	AbsError: 2.25786e+00
       Equation: "PotentialEquation"	RelError: 9.09091e-03	AbsError: 7.91642e-01
-    Region: "p_region"	RelError: 5.23411e-02	AbsError: 3.03415e+00
-      Equation: "ElectronContinuityEquation"	RelError: 1.04847e-10	AbsError: 1.04847e+00
+    Region: "p_region"	RelError: 5.23411e-02	AbsError: 3.01620e+00
+      Equation: "ElectronContinuityEquation"	RelError: 1.03052e-10	AbsError: 1.03052e+00
       Equation: "HoleContinuityEquation"	RelError: 1.21465e-10	AbsError: 1.21465e+00
       Equation: "PotentialEquation"	RelError: 5.23411e-02	AbsError: 7.71029e-01
 ✅ V = -2.200 V, Current = 4.6815e-02 A/cm
@@ -1708,13 +1724,13 @@ Iteration: 0
 Setting Anode Bias: -2.455 V
 number of equations 111738
 Iteration: 0
-  Device: "photodiode"	RelError: 6.19119e-02	AbsError: 4.22675e+00
-    Region: "n_region"	RelError: 9.00901e-03	AbsError: 4.22675e+00
+  Device: "photodiode"	RelError: 6.19119e-02	AbsError: 4.22688e+00
+    Region: "n_region"	RelError: 9.00901e-03	AbsError: 4.22688e+00
       Equation: "ElectronContinuityEquation"	RelError: 1.16809e-10	AbsError: 1.16809e+00
-      Equation: "HoleContinuityEquation"	RelError: 2.26702e-10	AbsError: 2.26702e+00
+      Equation: "HoleContinuityEquation"	RelError: 2.26715e-10	AbsError: 2.26715e+00
       Equation: "PotentialEquation"	RelError: 9.00901e-03	AbsError: 7.91642e-01
-    Region: "p_region"	RelError: 5.29028e-02	AbsError: 3.03391e+00
-      Equation: "ElectronContinuityEquation"	RelError: 1.04825e-10	AbsError: 1.04825e+00
+    Region: "p_region"	RelError: 5.29028e-02	AbsError: 3.01596e+00
+      Equation: "ElectronContinuityEquation"	RelError: 1.03030e-10	AbsError: 1.03030e+00
       Equation: "HoleContinuityEquation"	RelError: 1.21463e-10	AbsError: 1.21463e+00
       Equation: "PotentialEquation"	RelError: 5.29028e-02	AbsError: 7.71029e-01
 ✅ V = -2.455 V, Current = 4.7191e-02 A/cm
@@ -1722,13 +1738,13 @@ Iteration: 0
 Setting Anode Bias: -2.709 V
 number of equations 111738
 Iteration: 0
-  Device: "photodiode"	RelError: 6.15518e-02	AbsError: 4.21852e+00
-    Region: "n_region"	RelError: 8.92857e-03	AbsError: 4.21852e+00
+  Device: "photodiode"	RelError: 6.15518e-02	AbsError: 4.24989e+00
+    Region: "n_region"	RelError: 8.92857e-03	AbsError: 4.24989e+00
       Equation: "ElectronContinuityEquation"	RelError: 1.16809e-10	AbsError: 1.16809e+00
-      Equation: "HoleContinuityEquation"	RelError: 2.25879e-10	AbsError: 2.25879e+00
+      Equation: "HoleContinuityEquation"	RelError: 2.29016e-10	AbsError: 2.29016e+00
       Equation: "PotentialEquation"	RelError: 8.92857e-03	AbsError: 7.91642e-01
-    Region: "p_region"	RelError: 5.26233e-02	AbsError: 3.03367e+00
-      Equation: "ElectronContinuityEquation"	RelError: 1.04803e-10	AbsError: 1.04803e+00
+    Region: "p_region"	RelError: 5.26233e-02	AbsError: 3.01572e+00
+      Equation: "ElectronContinuityEquation"	RelError: 1.03008e-10	AbsError: 1.03008e+00
       Equation: "HoleContinuityEquation"	RelError: 1.21461e-10	AbsError: 1.21461e+00
       Equation: "PotentialEquation"	RelError: 5.26233e-02	AbsError: 7.71029e-01
 ✅ V = -2.709 V, Current = 4.7563e-02 A/cm
@@ -1736,13 +1752,13 @@ Iteration: 0
 Setting Anode Bias: -2.964 V
 number of equations 111738
 Iteration: 0
-  Device: "photodiode"	RelError: 6.07121e-02	AbsError: 4.22301e+00
-    Region: "n_region"	RelError: 8.84956e-03	AbsError: 4.22301e+00
+  Device: "photodiode"	RelError: 6.07121e-02	AbsError: 4.21815e+00
+    Region: "n_region"	RelError: 8.84956e-03	AbsError: 4.21815e+00
       Equation: "ElectronContinuityEquation"	RelError: 1.16809e-10	AbsError: 1.16809e+00
-      Equation: "HoleContinuityEquation"	RelError: 2.26328e-10	AbsError: 2.26328e+00
+      Equation: "HoleContinuityEquation"	RelError: 2.25841e-10	AbsError: 2.25841e+00
       Equation: "PotentialEquation"	RelError: 8.84956e-03	AbsError: 7.91642e-01
-    Region: "p_region"	RelError: 5.18625e-02	AbsError: 3.03343e+00
-      Equation: "ElectronContinuityEquation"	RelError: 1.04782e-10	AbsError: 1.04782e+00
+    Region: "p_region"	RelError: 5.18625e-02	AbsError: 3.01548e+00
+      Equation: "ElectronContinuityEquation"	RelError: 1.02986e-10	AbsError: 1.02986e+00
       Equation: "HoleContinuityEquation"	RelError: 1.21459e-10	AbsError: 1.21459e+00
       Equation: "PotentialEquation"	RelError: 5.18625e-02	AbsError: 7.71029e-01
 ✅ V = -2.964 V, Current = 4.7934e-02 A/cm
@@ -1750,13 +1766,13 @@ Iteration: 0
 Setting Anode Bias: -3.218 V
 number of equations 111738
 Iteration: 0
-  Device: "photodiode"	RelError: 5.95940e-02	AbsError: 4.21470e+00
-    Region: "n_region"	RelError: 8.77193e-03	AbsError: 4.21470e+00
+  Device: "photodiode"	RelError: 5.95940e-02	AbsError: 4.22947e+00
+    Region: "n_region"	RelError: 8.77193e-03	AbsError: 4.22947e+00
       Equation: "ElectronContinuityEquation"	RelError: 1.16809e-10	AbsError: 1.16809e+00
-      Equation: "HoleContinuityEquation"	RelError: 2.25496e-10	AbsError: 2.25496e+00
+      Equation: "HoleContinuityEquation"	RelError: 2.26974e-10	AbsError: 2.26974e+00
       Equation: "PotentialEquation"	RelError: 8.77193e-03	AbsError: 7.91642e-01
-    Region: "p_region"	RelError: 5.08220e-02	AbsError: 3.03320e+00
-      Equation: "ElectronContinuityEquation"	RelError: 1.04760e-10	AbsError: 1.04760e+00
+    Region: "p_region"	RelError: 5.08220e-02	AbsError: 3.01524e+00
+      Equation: "ElectronContinuityEquation"	RelError: 1.02965e-10	AbsError: 1.02965e+00
       Equation: "HoleContinuityEquation"	RelError: 1.21456e-10	AbsError: 1.21456e+00
       Equation: "PotentialEquation"	RelError: 5.08220e-02	AbsError: 7.71029e-01
 ✅ V = -3.218 V, Current = 4.8302e-02 A/cm
@@ -1764,13 +1780,13 @@ Iteration: 0
 Setting Anode Bias: -3.473 V
 number of equations 111738
 Iteration: 0
-  Device: "photodiode"	RelError: 5.83184e-02	AbsError: 4.19352e+00
-    Region: "n_region"	RelError: 8.69565e-03	AbsError: 4.19352e+00
+  Device: "photodiode"	RelError: 5.83184e-02	AbsError: 4.19758e+00
+    Region: "n_region"	RelError: 8.69565e-03	AbsError: 4.19758e+00
       Equation: "ElectronContinuityEquation"	RelError: 1.16809e-10	AbsError: 1.16809e+00
-      Equation: "HoleContinuityEquation"	RelError: 2.23379e-10	AbsError: 2.23379e+00
+      Equation: "HoleContinuityEquation"	RelError: 2.23785e-10	AbsError: 2.23785e+00
       Equation: "PotentialEquation"	RelError: 8.69565e-03	AbsError: 7.91642e-01
-    Region: "p_region"	RelError: 4.96227e-02	AbsError: 3.03296e+00
-      Equation: "ElectronContinuityEquation"	RelError: 1.04739e-10	AbsError: 1.04739e+00
+    Region: "p_region"	RelError: 4.96227e-02	AbsError: 3.01501e+00
+      Equation: "ElectronContinuityEquation"	RelError: 1.02944e-10	AbsError: 1.02944e+00
       Equation: "HoleContinuityEquation"	RelError: 1.21454e-10	AbsError: 1.21454e+00
       Equation: "PotentialEquation"	RelError: 4.96227e-02	AbsError: 7.71029e-01
 ✅ V = -3.473 V, Current = 4.8668e-02 A/cm
@@ -1778,13 +1794,13 @@ Iteration: 0
 Setting Anode Bias: -3.727 V
 number of equations 111738
 Iteration: 0
-  Device: "photodiode"	RelError: 5.69607e-02	AbsError: 4.24937e+00
-    Region: "n_region"	RelError: 8.62069e-03	AbsError: 4.24937e+00
+  Device: "photodiode"	RelError: 5.69607e-02	AbsError: 4.26428e+00
+    Region: "n_region"	RelError: 8.62069e-03	AbsError: 4.26428e+00
       Equation: "ElectronContinuityEquation"	RelError: 1.16809e-10	AbsError: 1.16809e+00
-      Equation: "HoleContinuityEquation"	RelError: 2.28964e-10	AbsError: 2.28964e+00
+      Equation: "HoleContinuityEquation"	RelError: 2.30455e-10	AbsError: 2.30455e+00
       Equation: "PotentialEquation"	RelError: 8.62069e-03	AbsError: 7.91642e-01
-    Region: "p_region"	RelError: 4.83400e-02	AbsError: 3.03272e+00
-      Equation: "ElectronContinuityEquation"	RelError: 1.04718e-10	AbsError: 1.04718e+00
+    Region: "p_region"	RelError: 4.83400e-02	AbsError: 3.01477e+00
+      Equation: "ElectronContinuityEquation"	RelError: 1.02922e-10	AbsError: 1.02922e+00
       Equation: "HoleContinuityEquation"	RelError: 1.21452e-10	AbsError: 1.21452e+00
       Equation: "PotentialEquation"	RelError: 4.83400e-02	AbsError: 7.71029e-01
 ✅ V = -3.727 V, Current = 4.9033e-02 A/cm
@@ -1792,13 +1808,13 @@ Iteration: 0
 Setting Anode Bias: -3.982 V
 number of equations 111738
 Iteration: 0
-  Device: "photodiode"	RelError: 5.55691e-02	AbsError: 4.19800e+00
-    Region: "n_region"	RelError: 8.54701e-03	AbsError: 4.19800e+00
+  Device: "photodiode"	RelError: 5.55691e-02	AbsError: 4.20340e+00
+    Region: "n_region"	RelError: 8.54701e-03	AbsError: 4.20340e+00
       Equation: "ElectronContinuityEquation"	RelError: 1.16809e-10	AbsError: 1.16809e+00
-      Equation: "HoleContinuityEquation"	RelError: 2.23827e-10	AbsError: 2.23827e+00
+      Equation: "HoleContinuityEquation"	RelError: 2.24367e-10	AbsError: 2.24367e+00
       Equation: "PotentialEquation"	RelError: 8.54701e-03	AbsError: 7.91642e-01
-    Region: "p_region"	RelError: 4.70221e-02	AbsError: 3.03249e+00
-      Equation: "ElectronContinuityEquation"	RelError: 1.04697e-10	AbsError: 1.04697e+00
+    Region: "p_region"	RelError: 4.70221e-02	AbsError: 3.01453e+00
+      Equation: "ElectronContinuityEquation"	RelError: 1.02901e-10	AbsError: 1.02901e+00
       Equation: "HoleContinuityEquation"	RelError: 1.21449e-10	AbsError: 1.21449e+00
       Equation: "PotentialEquation"	RelError: 4.70221e-02	AbsError: 7.71029e-01
 ✅ V = -3.982 V, Current = 4.9396e-02 A/cm
@@ -1806,13 +1822,13 @@ Iteration: 0
 Setting Anode Bias: -4.236 V
 number of equations 111738
 Iteration: 0
-  Device: "photodiode"	RelError: 5.41748e-02	AbsError: 4.20741e+00
-    Region: "n_region"	RelError: 8.47458e-03	AbsError: 4.20741e+00
+  Device: "photodiode"	RelError: 5.41748e-02	AbsError: 4.21165e+00
+    Region: "n_region"	RelError: 8.47458e-03	AbsError: 4.21165e+00
       Equation: "ElectronContinuityEquation"	RelError: 1.16809e-10	AbsError: 1.16809e+00
-      Equation: "HoleContinuityEquation"	RelError: 2.24768e-10	AbsError: 2.24768e+00
+      Equation: "HoleContinuityEquation"	RelError: 2.25191e-10	AbsError: 2.25191e+00
       Equation: "PotentialEquation"	RelError: 8.47458e-03	AbsError: 7.91642e-01
-    Region: "p_region"	RelError: 4.57003e-02	AbsError: 3.03225e+00
-      Equation: "ElectronContinuityEquation"	RelError: 1.04676e-10	AbsError: 1.04676e+00
+    Region: "p_region"	RelError: 4.57003e-02	AbsError: 3.01430e+00
+      Equation: "ElectronContinuityEquation"	RelError: 1.02880e-10	AbsError: 1.02880e+00
       Equation: "HoleContinuityEquation"	RelError: 1.21447e-10	AbsError: 1.21447e+00
       Equation: "PotentialEquation"	RelError: 4.57003e-02	AbsError: 7.71029e-01
 ✅ V = -4.236 V, Current = 4.9758e-02 A/cm
@@ -1820,13 +1836,13 @@ Iteration: 0
 Setting Anode Bias: -4.491 V
 number of equations 111738
 Iteration: 0
-  Device: "photodiode"	RelError: 5.27980e-02	AbsError: 4.21012e+00
-    Region: "n_region"	RelError: 8.40336e-03	AbsError: 4.21012e+00
+  Device: "photodiode"	RelError: 5.27980e-02	AbsError: 4.20208e+00
+    Region: "n_region"	RelError: 8.40336e-03	AbsError: 4.20208e+00
       Equation: "ElectronContinuityEquation"	RelError: 1.16809e-10	AbsError: 1.16809e+00
-      Equation: "HoleContinuityEquation"	RelError: 2.25039e-10	AbsError: 2.25039e+00
+      Equation: "HoleContinuityEquation"	RelError: 2.24234e-10	AbsError: 2.24234e+00
       Equation: "PotentialEquation"	RelError: 8.40336e-03	AbsError: 7.91642e-01
-    Region: "p_region"	RelError: 4.43947e-02	AbsError: 3.03202e+00
-      Equation: "ElectronContinuityEquation"	RelError: 1.04655e-10	AbsError: 1.04655e+00
+    Region: "p_region"	RelError: 4.43947e-02	AbsError: 3.01407e+00
+      Equation: "ElectronContinuityEquation"	RelError: 1.02860e-10	AbsError: 1.02860e+00
       Equation: "HoleContinuityEquation"	RelError: 1.21444e-10	AbsError: 1.21444e+00
       Equation: "PotentialEquation"	RelError: 4.43947e-02	AbsError: 7.71029e-01
 ✅ V = -4.491 V, Current = 5.0119e-02 A/cm
@@ -1834,13 +1850,13 @@ Iteration: 0
 Setting Anode Bias: -4.745 V
 number of equations 111738
 Iteration: 0
-  Device: "photodiode"	RelError: 5.14516e-02	AbsError: 4.20930e+00
-    Region: "n_region"	RelError: 8.33333e-03	AbsError: 4.20930e+00
+  Device: "photodiode"	RelError: 5.14516e-02	AbsError: 4.25056e+00
+    Region: "n_region"	RelError: 8.33333e-03	AbsError: 4.25056e+00
       Equation: "ElectronContinuityEquation"	RelError: 1.16809e-10	AbsError: 1.16809e+00
-      Equation: "HoleContinuityEquation"	RelError: 2.24957e-10	AbsError: 2.24957e+00
+      Equation: "HoleContinuityEquation"	RelError: 2.29082e-10	AbsError: 2.29082e+00
       Equation: "PotentialEquation"	RelError: 8.33333e-03	AbsError: 7.91642e-01
-    Region: "p_region"	RelError: 4.31183e-02	AbsError: 3.03179e+00
-      Equation: "ElectronContinuityEquation"	RelError: 1.04634e-10	AbsError: 1.04634e+00
+    Region: "p_region"	RelError: 4.31183e-02	AbsError: 3.01384e+00
+      Equation: "ElectronContinuityEquation"	RelError: 1.02839e-10	AbsError: 1.02839e+00
       Equation: "HoleContinuityEquation"	RelError: 1.21442e-10	AbsError: 1.21442e+00
       Equation: "PotentialEquation"	RelError: 4.31183e-02	AbsError: 7.71029e-01
 ✅ V = -4.745 V, Current = 5.0478e-02 A/cm
@@ -1848,25 +1864,64 @@ Iteration: 0
 Setting Anode Bias: -5.000 V
 number of equations 111738
 Iteration: 0
-  Device: "photodiode"	RelError: 5.01436e-02	AbsError: 4.21503e+00
-    Region: "n_region"	RelError: 8.26446e-03	AbsError: 4.21503e+00
+  Device: "photodiode"	RelError: 5.01436e-02	AbsError: 4.20157e+00
+    Region: "n_region"	RelError: 8.26446e-03	AbsError: 4.20157e+00
       Equation: "ElectronContinuityEquation"	RelError: 1.16809e-10	AbsError: 1.16809e+00
-      Equation: "HoleContinuityEquation"	RelError: 2.25530e-10	AbsError: 2.25530e+00
+      Equation: "HoleContinuityEquation"	RelError: 2.24184e-10	AbsError: 2.24184e+00
       Equation: "PotentialEquation"	RelError: 8.26446e-03	AbsError: 7.91642e-01
-    Region: "p_region"	RelError: 4.18792e-02	AbsError: 3.03156e+00
-      Equation: "ElectronContinuityEquation"	RelError: 1.04614e-10	AbsError: 1.04614e+00
+    Region: "p_region"	RelError: 4.18792e-02	AbsError: 3.01361e+00
+      Equation: "ElectronContinuityEquation"	RelError: 1.02819e-10	AbsError: 1.02819e+00
       Equation: "HoleContinuityEquation"	RelError: 1.21439e-10	AbsError: 1.21439e+00
       Equation: "PotentialEquation"	RelError: 4.18792e-02	AbsError: 7.71029e-01
 ✅ V = -5.000 V, Current = 5.0837e-02 A/cm
-  4B Done !!
+✅ Photocurrent simulation complete!
 
---- STEP 5: Calculating Quantum Efficiency ---
+------------------------------------------------------------
+CALCULATING QUANTUM EFFICIENCY
+------------------------------------------------------------
+Applied optical generation correction factor: 0.489
+Raw QE was 170.5%, corrected to 83.4%
 
---- STEP 7: Generating Plots ---
+=== QE Calculation Diagnostics ===
+Input Parameters:
+  Photon energy: 1.907 eV
+  Photon flux: 1.00e+17 photons/cm²/s
+  Device width: 4.0 μm
+  Power density: 0.031 W/cm² (306 W/m²)
+Device Analysis:
+  Max photocurrent density: 0.0279 A/cm
+  Max total photocurrent: 1.11e-05 A
+  Illuminated area: 0.000400 cm²
+  Total photons/s incident: 4.00e+13
+  Max electrons/s generated: 6.95e+13
+QE Results:
+  QE range: 78.2% to 85.1%
+  Mean QE: 83.4%
+Sample calculation (first point):
+  I_dark: 4.35e-04 A/cm
+  I_light: 2.60e-02 A/cm
+  I_photo: 2.56e-02 A/cm
+  Total current: 1.02e-05 A
+  Electrons/s: 6.39e+13
+  QE: 78.2%
+✅ QE values appear reasonable (mean: 83.4%)
+  Wavelength: 650 nm
+  Device width: 0.0004 cm
+  Max QE: 85.09%
+✅ Quantum efficiency calculation complete!
 
---- DEBUGGING QE DATA ---
-Light currents being used for QE (first 5 values): [0.02603917 0.0265577  0.0270755  0.02759256 0.02810882]
-Dark currents being used for QE (first 5 values): [0.00043529 0.00085925 0.0012832  0.00170716 0.00213111]
-Resulting QE values to be plotted (first 5 values): [159.82443306 160.4148105  161.00064473 161.58177018 162.1580091 ]
+================================================================================
+SIMULATION SUMMARY
+================================================================================
+Dark current range: 4.35e-04 to 2.30e-02 A/cm
+Photocurrent range: 2.60e-02 to 5.08e-02 A/cm
+Maximum current difference: -2.79e-02 A/cm
+QE range: 78.22% to 85.09%
 
- Max dif max(abs(Dark- light ))): -0.027852030696027905
+------------------------------------------------------------
+GENERATING INTERACTIVE PLOTS
+------------------------------------------------------------
+
+================================================================================
+✅ SIMULATION COMPLETED SUCCESSFULLY!
+================================================================================

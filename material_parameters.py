@@ -5,13 +5,13 @@
 
 silicon_material_properties = {
     # --- Intrinsic and General Properties ---
-    "Permittivity ⭐": {
+    "Permittivity": {#⭐
         "value": 11.9 * 8.854e-14,
         "unit": "F/cm",
         "computable_ab_initio": True,
         "explanation": "Computable as the material's dielectric tensor. A different material with a higher permittivity could be used to engineer junction capacitance, making it a target for materials design."
     },
-    "IntrinsicCarrierDensity ⭐": {
+    "IntrinsicCarrierDensity": {
         "value": 1.0e10,
         "unit": "cm⁻³",
         "computable_ab_initio": True,
@@ -25,7 +25,7 @@ silicon_material_properties = {
     },
 
     # --- Recombination Properties ---
-    "taun / taup (Carrier Lifetimes) ⭐": {
+    "Tau": {
         "value": 1.0e-6,
         "unit": "s",
         "computable_ab_initio": True,
@@ -33,7 +33,7 @@ silicon_material_properties = {
     },
 
     # --- Optical Properties ---
-    "alpha (Absorption Coefficient) ⭐": {
+    "alpha": {# (Absorption Coefficient) ⭐
         "value": 1e4,
         "unit": "cm⁻¹",
         "computable_ab_initio": True,
@@ -46,4 +46,5 @@ silicon_material_properties = {
         "computable_ab_initio": True,
         "explanation": "The empirical fitting parameters themselves aren't the direct output. Instead, LS-QUANT can directly calculate **mobility vs. doping concentration (μ vs. N)** by simulating carrier scattering from phonons and ionized dopants. You can then fit these first-principles results to the model. A better material would exhibit higher mobility at high doping concentrations."
     }
+
 }
