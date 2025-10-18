@@ -5,14 +5,21 @@
 # and comprehensive mesh refinement for accurate DEVSIM TCAD simulation.
 #
 """
-    Light ↓
-    ===================  z = 0 (front surface)
-    |   n+ region      |  Thickness: 0.5 μm, N_D = 1×10¹⁹ cm⁻³
-    |-------------------|  z = 0.5 μm (junction)
-    |   p region       |  Thickness: 50 μm, N_A = 1×10¹⁶ cm⁻³
-    |-------------------|
-    |   p+ substrate   |  Thickness: 200 μm, N_A = 1×10¹⁹ cm⁻³
-    ===================  z = 250.5 μm (back contact)
+      Light ↓ (incident on y=0 surface)
+      <-- width -->
+      +-----------+
+      |  cathode  |
++-----+-----------+-----+  y = 0
+|     n+ region         |  (n_plus_region)
+|-----------------------|  y = n_plus_thickness
+|                       |
+|       p region        |  (p_region)
+|                       |
+|-----------------------|  y = n_plus_thickness + p_thickness
+|     p+ substrate      |  (p_plus_region)
++-----------------------+  y = total_depth
+|         anode         |
++-----------------------+
 """
 
 import gmsh
@@ -187,6 +194,7 @@ class PhotodiodeMesh:
         gmsh.model.addPhysicalGroup(1, [l_bottom], name="anode")
 
         gmsh.model.addPhysicalGroup(1, [l_junction], name="pn_interface")
+        gmsh.model.addPhysicalGroup(1, [l_interface_p_pplus], name="p_pplus_interface")
 
         gmsh.model.addPhysicalGroup(1, [l_top_left, l_top_right], name="top_surface")
         gmsh.model.addPhysicalGroup(1, [l_left_n, l_left_p, l_left_pplus], name="left_side")
