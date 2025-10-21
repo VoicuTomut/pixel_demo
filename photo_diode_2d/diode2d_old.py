@@ -105,7 +105,7 @@ def add_drift_diffusion_physics(device_name):
         print(f"{'─' * 70}")
 
         # Build carrier transport models
-        build_drift_diffusion_model(device_name, region)
+        build_drift_diffusion_model_old(device_name, region)
         build_recombination_model(device_name, region)
 
         # Construct carrier continuity equations
@@ -169,7 +169,7 @@ def add_poisson_contact(device_name, contact_name, region_name, bias=0.0):
         device=device_name,
         contact=contact_name,
         name=f"{contact_name}_bc",
-        equation=f"Potential - {contact_name}_bias- + {V_bi} "
+        equation=f"Potential - {contact_name}_bias "
     )
 
     ds.contact_node_model(
@@ -1108,6 +1108,118 @@ def build_recombination_model_simplified(device_name, region):
     )
 
     print(f"      ✓ Simplified SRH recombination")
+
+
+def build_drift_diffusion_model_old(device_name, region):
+    """
+    Builds Scharfetter-Gummel drift-diffusion with EXPLICIT DERIVATIVES.
+    CRITICAL: DEVSIM cannot auto-differentiate Bernoulli functions!
+    """
+    print(f"    Building Scharfetter-Gummel drift-diffusion models...")
+
+    # Get material parameters
+    mu_n = ds.get_parameter(device=device_name, region=region, name="mu_n")
+    mu_p = ds.get_parameter(device=device_name, region=region, name="mu_p")
+    q = ds.get_parameter(device=device_name, name="q")
+    V_t = ds.get_parameter(device=device_name, name="V_t")
+
+    # Potential difference over thermal voltage
+    ds.edge_model(
+        device=device_name,
+        region=region,
+        name="V_diff_over_V_t",
+        equation="(Potential@n0 - Potential@n1)/V_t"
+    )
+
+    # Make carrier concentrations available on edges
+    ds.edge_from_node_model(device=device_name, region=region, node_model="Electrons")
+    ds.edge_from_node_model(device=device_name, region=region, node_model="Holes")
+
+    # ============================================================
+    # ELECTRON CURRENT with DERIVATIVES
+    # ============================================================
+    ds.edge_model(
+        device=device_name,
+        region=region,
+        name="ElectronCurrent",
+        equation=f"{q}*{mu_n}*{V_t}*EdgeInverseLength*(Electrons@n0*B(V_diff_over_V_t) - Electrons@n1*B(-V_diff_over_V_t))"
+    )
+
+    # Derivative w.r.t. Potential@n0
+    ds.edge_model(
+        device=device_name,
+        region=region,
+        name="ElectronCurrent:Potential@n0",
+        equation=f"{q}*{mu_n}*EdgeInverseLength*(Electrons@n0*dBdx(V_diff_over_V_t) + Electrons@n1*dBdx(-V_diff_over_V_t))/ V_t"
+    )
+
+    # Derivative w.r.t. Potential@n1
+    ds.edge_model(
+        device=device_name,
+        region=region,
+        name="ElectronCurrent:Potential@n1",
+        equation=f"-{q}*{mu_n}*EdgeInverseLength*(Electrons@n0*dBdx(V_diff_over_V_t) + Electrons@n1*dBdx(-V_diff_over_V_t))"
+    )
+
+    # Derivative w.r.t. Electrons@n0
+    ds.edge_model(
+        device=device_name,
+        region=region,
+        name="ElectronCurrent:Electrons@n0",
+        equation=f"{q}*{mu_n}*{V_t}*EdgeInverseLength*B(V_diff_over_V_t)"
+    )
+
+    # Derivative w.r.t. Electrons@n1
+    ds.edge_model(
+        device=device_name,
+        region=region,
+        name="ElectronCurrent:Electrons@n1",
+        equation=f"-{q}*{mu_n}*{V_t}*EdgeInverseLength*B(-V_diff_over_V_t)"
+    )
+
+    # ============================================================
+    # HOLE CURRENT with DERIVATIVES
+    # ============================================================
+    ds.edge_model(
+        device=device_name,
+        region=region,
+        name="HoleCurrent",
+        equation=f"-{q}*{mu_p}*{V_t}*EdgeInverseLength*(Holes@n1*B(V_diff_over_V_t) - Holes@n0*B(-V_diff_over_V_t))"
+    )
+
+    # Derivative w.r.t. Potential@n0
+    ds.edge_model(
+        device=device_name,
+        region=region,
+        name="HoleCurrent:Potential@n0",
+        equation=f"-{q}*{mu_p}*EdgeInverseLength*(Holes@n1*dBdx(V_diff_over_V_t) + Holes@n0*dBdx(-V_diff_over_V_t))"
+    )
+
+    # Derivative w.r.t. Potential@n1
+    ds.edge_model(
+        device=device_name,
+        region=region,
+        name="HoleCurrent:Potential@n1",
+        equation=f"{q}*{mu_p}*EdgeInverseLength*(Holes@n1*dBdx(V_diff_over_V_t) + Holes@n0*dBdx(-V_diff_over_V_t))"
+    )
+
+    # Derivative w.r.t. Holes@n0
+    ds.edge_model(
+        device=device_name,
+        region=region,
+        name="HoleCurrent:Holes@n0",
+        equation=f"{q}*{mu_p}*{V_t}*EdgeInverseLength*B(-V_diff_over_V_t)"
+    )
+
+    # Derivative w.r.t. Holes@n1
+    ds.edge_model(
+        device=device_name,
+        region=region,
+        name="HoleCurrent:Holes@n1",
+        equation=f"-{q}*{mu_p}*{V_t}*EdgeInverseLength*B(V_diff_over_V_t)"
+    )
+
+    print(f"      ✓ Scharfetter-Gummel currents J_n and J_p created WITH DERIVATIVES")
 
 
 def build_recombination_model(device_name, region, srh=True, radiative=True, auger=True):
