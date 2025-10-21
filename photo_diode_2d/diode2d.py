@@ -954,6 +954,114 @@ def build_drift_diffusion_model(device_name, region):
         equation=f"{q}*{mu_n}*{V_t}*EdgeInverseLength*(Electrons@n0*B(V_diff_over_V_t) - Electrons@n1*B(-V_diff_over_V_t))"
     )
 
+    # CORRECTED: Added "* (1/V_t)" from the chain rule
+    ds.edge_model(
+        device=device_name,
+        region=region,
+        name="ElectronCurrent:Potential@n0",
+        equation=f"{q}*{mu_n}*EdgeInverseLength*(Electrons@n0*dBdx(V_diff_over_V_t) + Electrons@n1*dBdx(-V_diff_over_V_t)) * (1/V_t)"
+    )
+
+    # CORRECTED: Added "* (1/V_t)" from the chain rule
+    ds.edge_model(
+        device=device_name,
+        region=region,
+        name="ElectronCurrent:Potential@n1",
+        equation=f"-{q}*{mu_n}*EdgeInverseLength*(Electrons@n0*dBdx(V_diff_over_V_t) + Electrons@n1*dBdx(-V_diff_over_V_t)) * (1/V_t)"
+    )
+
+    ds.edge_model(
+        device=device_name,
+        region=region,
+        name="ElectronCurrent:Electrons@n0",
+        equation=f"{q}*{mu_n}*{V_t}*EdgeInverseLength*B(V_diff_over_V_t)"
+    )
+
+    ds.edge_model(
+        device=device_name,
+        region=region,
+        name="ElectronCurrent:Electrons@n1",
+        equation=f"-{q}*{mu_n}*{V_t}*EdgeInverseLength*B(-V_diff_over_V_t)"
+    )
+
+    # ============================================================
+    # HOLE CURRENT with DERIVATIVES
+    # ============================================================
+    ds.edge_model(
+        device=device_name,
+        region=region,
+        name="HoleCurrent",
+        equation=f"-{q}*{mu_p}*{V_t}*EdgeInverseLength*(Holes@n1*B(V_diff_over_V_t) - Holes@n0*B(-V_diff_over_V_t))"
+    )
+
+    # CORRECTED: Added "* (1/V_t)" from the chain rule
+    ds.edge_model(
+        device=device_name,
+        region=region,
+        name="HoleCurrent:Potential@n0",
+        equation=f"-{q}*{mu_p}*EdgeInverseLength*(Holes@n1*dBdx(V_diff_over_V_t) + Holes@n0*dBdx(-V_diff_over_V_t)) * (1/V_t)"
+    )
+
+    # CORRECTED: Added "* (1/V_t)" from the chain rule
+    ds.edge_model(
+        device=device_name,
+        region=region,
+        name="HoleCurrent:Potential@n1",
+        equation=f"{q}*{mu_p}*EdgeInverseLength*(Holes@n1*dBdx(V_diff_over_V_t) + Holes@n0*dBdx(-V_diff_over_V_t)) * (1/V_t)"
+    )
+
+    ds.edge_model(
+        device=device_name,
+        region=region,
+        name="HoleCurrent:Holes@n0",
+        equation=f"{q}*{mu_p}*{V_t}*EdgeInverseLength*B(-V_diff_over_V_t)"
+    )
+
+    ds.edge_model(
+        device=device_name,
+        region=region,
+        name="HoleCurrent:Holes@n1",
+        equation=f"-{q}*{mu_p}*{V_t}*EdgeInverseLength*B(V_diff_over_V_t)"
+    )
+
+    print(f"      ✓ Scharfetter-Gummel currents J_n and J_p created WITH DERIVATIVES")
+
+
+def build_drift_diffusion_model_old(device_name, region):
+    """
+    Builds Scharfetter-Gummel drift-diffusion with EXPLICIT DERIVATIVES.
+    CRITICAL: DEVSIM cannot auto-differentiate Bernoulli functions!
+    """
+    print(f"    Building Scharfetter-Gummel drift-diffusion models...")
+
+    # Get material parameters
+    mu_n = ds.get_parameter(device=device_name, region=region, name="mu_n")
+    mu_p = ds.get_parameter(device=device_name, region=region, name="mu_p")
+    q = ds.get_parameter(device=device_name, name="q")
+    V_t = ds.get_parameter(device=device_name, name="V_t")
+
+    # Potential difference over thermal voltage
+    ds.edge_model(
+        device=device_name,
+        region=region,
+        name="V_diff_over_V_t",
+        equation="(Potential@n0 - Potential@n1)/V_t"
+    )
+
+    # Make carrier concentrations available on edges
+    ds.edge_from_node_model(device=device_name, region=region, node_model="Electrons")
+    ds.edge_from_node_model(device=device_name, region=region, node_model="Holes")
+
+    # ============================================================
+    # ELECTRON CURRENT with DERIVATIVES
+    # ============================================================
+    ds.edge_model(
+        device=device_name,
+        region=region,
+        name="ElectronCurrent",
+        equation=f"{q}*{mu_n}*{V_t}*EdgeInverseLength*(Electrons@n0*B(V_diff_over_V_t) - Electrons@n1*B(-V_diff_over_V_t))"
+    )
+
     # Derivative w.r.t. Potential@n0
     ds.edge_model(
         device=device_name,
@@ -1246,7 +1354,7 @@ def construct_poisson_eq(device_name, region):
         edge_model="ElectricFlux",
         edge_volume_model="",
         node_model="SpaceCharge",
-        variable_update="default"
+        variable_update="log_damp"
     )
 
     print(f"      ✓ Poisson equation: ∇·(ε∇ψ) = -q(p - n + N_D - N_A)")
@@ -1290,7 +1398,7 @@ def construct_electron_continuity_eq(device_name, region):
         variable_name="Electrons",
         edge_model="ElectronCurrent",
         node_model="ElectronGenerationSource",
-        variable_update="positive"
+        variable_update="log_damp"
     )
 
     print(f"      ✓ Electron continuity: ∇·J_n - q(U-G) = 0")
@@ -1327,301 +1435,10 @@ def construct_hole_continuity_eq(device_name, region):
         variable_name="Holes",
         edge_model="HoleCurrent",
         node_model="HoleGenerationSource",
-        variable_update="positive"
+        variable_update="log_damp"
     )
 
     print(f"      ✓ Hole continuity: ∇·J_p + q(U-G) = 0")
-
-def add_ohmic_contact(device_name, contact_name, region_name, bias=0.0):
-    """
-    Add ohmic contact boundary conditions.
-
-    For ohmic contacts:
-    - ψ = V_applied + V_bi (built-in potential)
-    - n = N_D (for n-type contact)
-    - p = n_i²/N_D (for n-type contact)
-
-    Args:
-        device_name: Device identifier
-        contact_name: Name of contact (e.g., 'cathode', 'anode')
-        region_name: Associated region name
-        bias: Applied bias voltage [V]
-    """
-    print(f"    Adding ohmic contact: {contact_name}")
-
-    # Get parameters
-    n_i = ds.get_parameter(device=device_name, name="n_i")
-    N_D = ds.get_parameter(device=device_name, region=region_name, name="N_D")
-    N_A = ds.get_parameter(device=device_name, region=region_name, name="N_A")
-    V_t = ds.get_parameter(device=device_name, name="V_t")
-
-    # Determine contact type and equilibrium carrier concentrations
-    if N_D > N_A:  # n-type contact
-        n_contact = N_D
-        p_contact = n_i ** 2 / N_D
-        V_bi = V_t * math.log(N_D / n_i)
-    else:  # p-type contact
-        p_contact = N_A
-        n_contact = n_i ** 2 / N_A
-        V_bi = -V_t * math.log(N_A / n_i)
-
-    # Set contact bias
-    ds.set_parameter(device=device_name, name=f"{contact_name}_bias", value=bias)
-
-    # Contact potential (including built-in potential)
-    ds.contact_node_model(
-        device=device_name,
-        contact=contact_name,
-        name=f"{contact_name}_bc",
-        equation=f"Potential - {contact_name}_bias - {V_bi}"
-    )
-
-    # Derivative of contact potential BC
-    ds.contact_node_model(
-        device=device_name,
-        contact=contact_name,
-        name=f"{contact_name}_bc:Potential",
-        equation="1.0"
-    )
-
-    # Contact carrier concentrations
-    ds.contact_node_model(
-        device=device_name,
-        contact=contact_name,
-        name=f"{contact_name}_n_bc",
-        equation=f"Electrons - {n_contact}"
-    )
-
-    ds.contact_node_model(
-        device=device_name,
-        contact=contact_name,
-        name=f"{contact_name}_n_bc:Electrons",
-        equation="1.0"
-    )
-
-    ds.contact_node_model(
-        device=device_name,
-        contact=contact_name,
-        name=f"{contact_name}_p_bc",
-        equation=f"Holes - {p_contact}"
-    )
-
-    ds.contact_node_model(
-        device=device_name,
-        contact=contact_name,
-        name=f"{contact_name}_p_bc:Holes",
-        equation="1.0"
-    )
-
-    # Add contact equations (NO variable_name parameter!)
-    ds.contact_equation(
-        device=device_name,
-        contact=contact_name,
-        name="PoissonEquation",
-        node_model=f"{contact_name}_bc",
-        edge_charge_model="ElectricFlux"
-    )
-
-    ds.contact_equation(
-        device=device_name,
-        contact=contact_name,
-        name="ElectronContinuity",
-        node_model=f"{contact_name}_n_bc",
-        edge_current_model="ElectronCurrent"
-    )
-
-    ds.contact_equation(
-        device=device_name,
-        contact=contact_name,
-        name="HoleContinuity",
-        node_model=f"{contact_name}_p_bc",
-        edge_current_model="HoleCurrent"
-    )
-
-    print(f"      ✓ Ohmic contact {contact_name}: V={bias}V, n={n_contact:.2e}, p={p_contact:.2e}")
-
-
-def add_interface_conditions(device_name, interface_name):
-    """
-    Add continuity conditions at semiconductor-semiconductor interfaces.
-
-    At interfaces between regions (e.g., p-n junction):
-    - ψ continuous
-    - n, p continuous
-    - ε∇ψ continuous (Gauss's law)
-    - J_n, J_p continuous (current conservation)
-
-    Args:
-        device_name: Device identifier
-        interface_name: Name of interface (e.g., 'pn_interface')
-    """
-    print(f"    Adding interface conditions: {interface_name}")
-
-    # Create continuity models for potential
-    ds.interface_model(
-        device=device_name,
-        interface=interface_name,
-        name="continuous_potential",
-        equation="Potential@r0 - Potential@r1"
-    )
-
-    ds.interface_model(
-        device=device_name,
-        interface=interface_name,
-        name="continuous_potential:Potential@r0",
-        equation="1.0"
-    )
-
-    ds.interface_model(
-        device=device_name,
-        interface=interface_name,
-        name="continuous_potential:Potential@r1",
-        equation="-1.0"
-    )
-
-    # Create continuity models for electrons
-    ds.interface_model(
-        device=device_name,
-        interface=interface_name,
-        name="continuous_electrons",
-        equation="Electrons@r0 - Electrons@r1"
-    )
-
-    ds.interface_model(
-        device=device_name,
-        interface=interface_name,
-        name="continuous_electrons:Electrons@r0",
-        equation="1.0"
-    )
-
-    ds.interface_model(
-        device=device_name,
-        interface=interface_name,
-        name="continuous_electrons:Electrons@r1",
-        equation="-1.0"
-    )
-
-    # Create continuity models for holes
-    ds.interface_model(
-        device=device_name,
-        interface=interface_name,
-        name="continuous_holes",
-        equation="Holes@r0 - Holes@r1"
-    )
-
-    ds.interface_model(
-        device=device_name,
-        interface=interface_name,
-        name="continuous_holes:Holes@r0",
-        equation="1.0"
-    )
-
-    ds.interface_model(
-        device=device_name,
-        interface=interface_name,
-        name="continuous_holes:Holes@r1",
-        equation="-1.0"
-    )
-
-    # Apply continuous potential condition
-    ds.interface_equation(
-        device=device_name,
-        interface=interface_name,
-        name="PoissonEquation",
-        interface_model="continuous_potential",
-        type="continuous"
-    )
-
-    # Apply continuous electron concentration condition
-    ds.interface_equation(
-        device=device_name,
-        interface=interface_name,
-        name="ElectronContinuity",
-        interface_model="continuous_electrons",
-        type="continuous"
-    )
-
-    # Apply continuous hole concentration condition
-    ds.interface_equation(
-        device=device_name,
-        interface=interface_name,
-        name="HoleContinuity",
-        interface_model="continuous_holes",
-        type="continuous"
-    )
-
-    print(f"      ✓ Interface conditions: continuous ψ, n, p")
-
-def add_physics(device_name):
-    """
-    STEP 1: DEFINE VARIABLES, PHYSICS & EQUATIONS
-    :param device_name:
-    :return:
-    """
-
-    regions = ds.get_region_list(device=device_name)
-    contacts = ds.get_contact_list(device=device_name)
-    interfaces = ds.get_interface_list(device=device_name)
-
-    print(f"\nConfiguring physics for {len(regions)} regions: {regions}")
-    for region in regions:
-        print(f"\n{'─' * 70}")
-        print(f"Region: {region}")
-        print(f"{'─' * 70}")
-
-        # Step 1: Create solution variables
-        create_solution_variables(device_name, region)
-        # Step 2: Set initial conditions
-        set_initial_conditions(device_name, region)
-
-        #Physics Models
-        build_electric_field_model(device_name,  region)
-        build_drift_diffusion_model(device_name,  region)
-        build_recombination_model(device_name,  region)
-
-        #Construct equations
-        construct_poisson_eq(device_name,region)
-        construct_electron_continuity_eq(device_name,region)
-        construct_hole_continuity_eq(device_name, region)
-
-    print(f"\n{'─' * 70}")
-    print("CONTACT BOUNDARY CONDITIONS")
-    print(f"{'─' * 70}")
-
-    for contact in contacts:
-        # Get the region associated with this contact
-        if contact == 'cathode':
-            region = 'n_plus_region'
-            bias = 0.0  # Initial bias
-        elif contact == 'anode':
-            region = 'p_plus_region'
-            bias = 0.0  # Ground reference
-        else:
-            print(f"Warning: Unknown contact {contact}, skipping...")
-            continue
-
-        add_ohmic_contact(device_name, contact, region, bias)
-
-    print(f"\n{'─' * 70}")
-    print("INTERFACE CONDITIONS")
-    print(f"{'─' * 70}")
-
-    for interface in interfaces:
-        add_interface_conditions(device_name, interface)
-
-    print("\n" + "=" * 70)
-    print("✓ PHYSICS SETUP COMPLETE")
-    print("=" * 70)
-    print("\nDevice is ready for solving!")
-    print("Next steps:")
-    print("  1. Solve equilibrium (V=0, G=0)")
-    print("  2. Solve dark I-V characteristics")
-    print("  3. Add optical generation and solve illuminated characteristics")
-
-
-
-    return device_name
-
 
 
 
@@ -1716,7 +1533,7 @@ def solve_equilibrium(device_name):
 
     try:
         print("\nStage 1: Very relaxed convergence...")
-        ds.solve(type="dc", absolute_error=1e15, relative_error=1e-3, maximum_iterations=100)
+        ds.solve(type="dc", absolute_error=1e10, relative_error=1e-3, maximum_iterations=500)
         print("✓ Stage 1 complete")
 
         print("\nStage 2: Medium convergence...")

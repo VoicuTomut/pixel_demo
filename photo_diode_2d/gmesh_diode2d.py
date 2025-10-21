@@ -48,11 +48,17 @@ class PhotodiodeMesh:
                  top_contact_x_end=55.0,
 
                  # Mesh refinement [μm] - ALL ARE NOW USED
-                 mesh_size_junction=0.002,  # 2 nm at junction
-                 mesh_size_interface=0.05,  # 50 nm at p/p+ interface
-                 mesh_size_surface=0.02,  # 20 nm at non-contact surfaces
-                 mesh_size_contact=0.02,  # 20 nm at contacts
-                 mesh_size_bulk=2.0,  # 2 μm in bulk regions
+                 # mesh_size_junction=0.002,  # 2 nm at junction
+                 # mesh_size_interface=0.05,  # 50 nm at p/p+ interface
+                 # mesh_size_surface=0.02,  # 20 nm at non-contact surfaces
+                 # mesh_size_contact=0.02,  # 20 nm at contacts
+                 # mesh_size_bulk=2.0,  # 2 μm in bulk regions
+
+                 mesh_size_junction=0.05,  # Was 0.002 (2 nm), now 50 nm
+                 mesh_size_interface=0.2,  # Was 0.05, now 200 nm
+                 mesh_size_surface=0.5,  # Was 0.02, now 500 nm
+                 mesh_size_contact=0.5,  # Was 0.02, now 500 nm
+                 mesh_size_bulk=5.0,  # Was 2.0, now 5 μm
 
                  # Output options
                  output_file="gmsh_diode2d.msh",
