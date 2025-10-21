@@ -16,6 +16,375 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 
+def add_poisson_physics(device_name):
+    """
+    STEP 1A: DEFINE VARIABLES & POISSON EQUATION ONLY
+
+    Sets up only the electrostatic potential equation.
+    This allows solving for potential first before adding carrier transport.
+    """
+
+    regions = ds.get_region_list(device=device_name)
+    contacts = ds.get_contact_list(device=device_name)
+    interfaces = ds.get_interface_list(device=device_name)
+
+    print("\n" + "=" * 70)
+    print("STEP 1A: POISSON-ONLY PHYSICS SETUP")
+    print("=" * 70)
+    print(f"\nConfiguring Poisson equation for {len(regions)} regions: {regions}")
+
+    for region in regions:
+        print(f"\n{'─' * 70}")
+        print(f"Region: {region}")
+        print(f"{'─' * 70}")
+
+        # Step 1: Create solution variables (all three)
+        create_solution_variables(device_name, region)
+
+        # Step 2: Set initial conditions
+        set_initial_conditions(device_name, region)
+
+        # Step 3: Build electric field model (needed for Poisson)
+        build_electric_field_model(device_name, region)
+
+        # Step 4: Construct ONLY Poisson equation
+        construct_poisson_eq(device_name, region)
+
+    # Add contact boundary conditions for Poisson only
+    print(f"\n{'─' * 70}")
+    print("CONTACT BOUNDARY CONDITIONS (Poisson Only)")
+    print(f"{'─' * 70}")
+
+    for contact in contacts:
+        if contact == 'cathode':
+            region = 'n_plus_region'
+            bias = 0.0
+        elif contact == 'anode':
+            region = 'p_plus_region'
+            bias = 0.0
+        else:
+            print(f"Warning: Unknown contact {contact}, skipping...")
+            continue
+
+        add_poisson_contact(device_name, contact, region, bias)
+
+    # Add interface conditions for Poisson only
+    print(f"\n{'─' * 70}")
+    print("INTERFACE CONDITIONS (Poisson Only)")
+    print(f"{'─' * 70}")
+
+    for interface in interfaces:
+        add_poisson_interface(device_name, interface)
+
+    print("\n" + "=" * 70)
+    print("✓ POISSON PHYSICS SETUP COMPLETE")
+    print("=" * 70)
+
+    return device_name
+
+
+def add_drift_diffusion_physics(device_name):
+    """
+    STEP 1B: ADD DRIFT-DIFFUSION EQUATIONS (Carrier Transport)
+
+    Adds electron and hole continuity equations to the existing Poisson setup.
+    """
+
+    regions = ds.get_region_list(device=device_name)
+    contacts = ds.get_contact_list(device=device_name)
+    interfaces = ds.get_interface_list(device=device_name)
+
+    print("\n" + "=" * 70)
+    print("STEP 1B: DRIFT-DIFFUSION PHYSICS SETUP")
+    print("=" * 70)
+    print(f"\nAdding carrier transport equations for {len(regions)} regions: {regions}")
+
+    for region in regions:
+        print(f"\n{'─' * 70}")
+        print(f"Region: {region}")
+        print(f"{'─' * 70}")
+
+        # Build carrier transport models
+        build_drift_diffusion_model(device_name, region)
+        build_recombination_model(device_name, region)
+
+        # Construct carrier continuity equations
+        construct_electron_continuity_eq(device_name, region)
+        construct_hole_continuity_eq(device_name, region)
+
+        # CRITICAL: Re-set initial conditions
+        print(f"    Re-initializing carrier concentrations...")
+        set_initial_conditions(device_name, region)
+
+    # Update contact boundary conditions to include carriers
+    print(f"\n{'─' * 70}")
+    print("CONTACT BOUNDARY CONDITIONS (Adding Carrier BCs)")
+    print(f"{'─' * 70}")
+
+    for contact in contacts:
+        if contact == 'cathode':
+            region = 'n_plus_region'
+        elif contact == 'anode':
+            region = 'p_plus_region'
+        else:
+            print(f"Warning: Unknown contact {contact}, skipping...")
+            continue
+
+        add_carrier_contact_bc(device_name, contact, region)
+
+    # Update interface conditions to include carriers
+    print(f"\n{'─' * 70}")
+    print("INTERFACE CONDITIONS (Adding Carrier Continuity)")
+    print(f"{'─' * 70}")
+
+    for interface in interfaces:
+        add_carrier_interface(device_name, interface)
+
+    print("\n" + "=" * 70)
+    print("✓ DRIFT-DIFFUSION PHYSICS SETUP COMPLETE")
+    print("=" * 70)
+
+    return device_name
+
+
+def add_poisson_contact(device_name, contact_name, region_name, bias=0.0):
+    """Add contact boundary condition for Poisson equation only."""
+    print(f"    Adding Poisson contact: {contact_name}")
+
+    n_i = ds.get_parameter(device=device_name, name="n_i")
+    N_D = ds.get_parameter(device=device_name, region=region_name, name="N_D")
+    N_A = ds.get_parameter(device=device_name, region=region_name, name="N_A")
+    V_t = ds.get_parameter(device=device_name, name="V_t")
+
+    # Determine built-in potential
+    if N_D > N_A:  # n-type contact
+        V_bi = V_t * math.log(N_D / n_i)
+    else:  # p-type contact
+        V_bi = -V_t * math.log(N_A / n_i)
+
+    ds.set_parameter(device=device_name, name=f"{contact_name}_bias", value=bias)
+
+    # Contact potential BC
+    ds.contact_node_model(
+        device=device_name,
+        contact=contact_name,
+        name=f"{contact_name}_bc",
+        equation=f"Potential - {contact_name}_bias - {V_bi}"
+    )
+
+    ds.contact_node_model(
+        device=device_name,
+        contact=contact_name,
+        name=f"{contact_name}_bc:Potential",
+        equation="1.0"
+    )
+
+    ds.contact_equation(
+        device=device_name,
+        contact=contact_name,
+        name="PoissonEquation",
+        node_model=f"{contact_name}_bc",
+        edge_charge_model="ElectricFlux"
+    )
+
+    print(f"      ✓ Poisson contact {contact_name}: V={bias}V + V_bi={V_bi:.4f}V")
+
+
+def add_carrier_contact_bc(device_name, contact_name, region_name):
+    """Add carrier boundary conditions to an existing contact."""
+    print(f"    Adding carrier BCs to contact: {contact_name}")
+
+    n_i = ds.get_parameter(device=device_name, name="n_i")
+    N_D = ds.get_parameter(device=device_name, region=region_name, name="N_D")
+    N_A = ds.get_parameter(device=device_name, region=region_name, name="N_A")
+
+    if N_D > N_A:  # n-type contact
+        n_contact = N_D
+        p_contact = n_i ** 2 / N_D
+    else:  # p-type contact
+        p_contact = N_A
+        n_contact = n_i ** 2 / N_A
+
+    # Electron BC
+    ds.contact_node_model(
+        device=device_name,
+        contact=contact_name,
+        name=f"{contact_name}_n_bc",
+        equation=f"Electrons - {n_contact}"
+    )
+
+    ds.contact_node_model(
+        device=device_name,
+        contact=contact_name,
+        name=f"{contact_name}_n_bc:Electrons",
+        equation="1.0"
+    )
+
+    # Hole BC
+    ds.contact_node_model(
+        device=device_name,
+        contact=contact_name,
+        name=f"{contact_name}_p_bc",
+        equation=f"Holes - {p_contact}"
+    )
+
+    ds.contact_node_model(
+        device=device_name,
+        contact=contact_name,
+        name=f"{contact_name}_p_bc:Holes",
+        equation="1.0"
+    )
+
+    ds.contact_equation(
+        device=device_name,
+        contact=contact_name,
+        name="ElectronContinuity",
+        node_model=f"{contact_name}_n_bc",
+        edge_current_model="ElectronCurrent"
+    )
+
+    ds.contact_equation(
+        device=device_name,
+        contact=contact_name,
+        name="HoleContinuity",
+        node_model=f"{contact_name}_p_bc",
+        edge_current_model="HoleCurrent"
+    )
+
+    print(f"      ✓ Carrier BCs: n={n_contact:.2e}, p={p_contact:.2e}")
+
+
+def add_poisson_interface(device_name, interface_name):
+    """Add interface condition for Poisson equation only."""
+    print(f"    Adding Poisson interface: {interface_name}")
+
+    ds.interface_model(
+        device=device_name,
+        interface=interface_name,
+        name="continuous_potential",
+        equation="Potential@r0 - Potential@r1"
+    )
+
+    ds.interface_model(
+        device=device_name,
+        interface=interface_name,
+        name="continuous_potential:Potential@r0",
+        equation="1.0"
+    )
+
+    ds.interface_model(
+        device=device_name,
+        interface=interface_name,
+        name="continuous_potential:Potential@r1",
+        equation="-1.0"
+    )
+
+    ds.interface_equation(
+        device=device_name,
+        interface=interface_name,
+        name="PoissonEquation",
+        interface_model="continuous_potential",
+        type="continuous"
+    )
+
+    print(f"      ✓ Interface: continuous ψ")
+
+
+def add_carrier_interface(device_name, interface_name):
+    """Add carrier continuity conditions to an existing interface."""
+    print(f"    Adding carrier interface conditions: {interface_name}")
+
+    # Continuous electrons
+    ds.interface_model(
+        device=device_name,
+        interface=interface_name,
+        name="continuous_electrons",
+        equation="Electrons@r0 - Electrons@r1"
+    )
+
+    ds.interface_model(
+        device=device_name,
+        interface=interface_name,
+        name="continuous_electrons:Electrons@r0",
+        equation="1.0"
+    )
+
+    ds.interface_model(
+        device=device_name,
+        interface=interface_name,
+        name="continuous_electrons:Electrons@r1",
+        equation="-1.0"
+    )
+
+    # Continuous holes
+    ds.interface_model(
+        device=device_name,
+        interface=interface_name,
+        name="continuous_holes",
+        equation="Holes@r0 - Holes@r1"
+    )
+
+    ds.interface_model(
+        device=device_name,
+        interface=interface_name,
+        name="continuous_holes:Holes@r0",
+        equation="1.0"
+    )
+
+    ds.interface_model(
+        device=device_name,
+        interface=interface_name,
+        name="continuous_holes:Holes@r1",
+        equation="-1.0"
+    )
+
+    ds.interface_equation(
+        device=device_name,
+        interface=interface_name,
+        name="ElectronContinuity",
+        interface_model="continuous_electrons",
+        type="continuous"
+    )
+
+    ds.interface_equation(
+        device=device_name,
+        interface=interface_name,
+        name="HoleContinuity",
+        interface_model="continuous_holes",
+        type="continuous"
+    )
+
+    print(f"      ✓ Interface: continuous n, p")
+
+
+def solve_poisson_only(device_name):
+    """
+    Solve ONLY Poisson's equation to get initial potential distribution.
+    This is now possible since we split the physics setup.
+    """
+    print("\n" + "=" * 70)
+    print("STEP: SOLVING POISSON EQUATION ONLY (INITIAL POTENTIAL)")
+    print("=" * 70)
+
+    try:
+        # Solve with relaxed tolerance - it's just an initial guess
+        print("\nSolving for electrostatic potential...")
+        ds.solve(
+            type="dc",
+            absolute_error=1e12,
+            relative_error=1e-8,
+            maximum_iterations=50
+        )
+        print("✓ Successfully solved for initial potential distribution.")
+        return True
+
+    except ds.error as msg:
+        print(f"✗ Poisson solve failed: {msg}")
+        print("  This is not critical - continuing with charge neutrality guess...")
+        return False
+
+
+
 def setup_photodiode_device(mesh_file):
     """
     Complete setup of photodiode device structure in DEVSIM.
@@ -468,6 +837,9 @@ def set_initial_conditions(device_name, region):
     """
     print(f"  Setting initial conditions in {region}...")
 
+    # Get the number of nodes in the current region
+    num_nodes = len(ds.get_node_model_values(device=device_name, region=region, name="node_index"))
+
     # Get doping and material parameters
     N_D = ds.get_parameter(device=device_name, region=region, name="N_D")
     N_A = ds.get_parameter(device=device_name, region=region, name="N_A")
@@ -484,13 +856,18 @@ def set_initial_conditions(device_name, region):
         p_init = abs(N_net)
         n_init = n_i ** 2 / abs(N_net)
 
-    # Set initial values
+    # CORRECTED: Create lists with a value for each node
+    potential_vals = [0.0] * num_nodes
+    electron_vals = [n_init] * num_nodes
+    hole_vals = [p_init] * num_nodes
+
+    # Set initial values using the correctly sized lists
     ds.set_node_values(device=device_name, region=region, name="Potential",
-                       init_from="Potential", values=[0.0])
+                       values=potential_vals)
     ds.set_node_values(device=device_name, region=region, name="Electrons",
-                       init_from="Electrons", values=[n_init])
+                       values=electron_vals)
     ds.set_node_values(device=device_name, region=region, name="Holes",
-                       init_from="Holes", values=[p_init])
+                       values=hole_vals)
 
     print(f"    ✓ n_init = {n_init:.2e}, p_init = {p_init:.2e}")
 
@@ -1246,58 +1623,125 @@ def add_physics(device_name):
     return device_name
 
 
-def solve_potential_v0(device_name):
-    """
-    Solves for the potential only as an initial guess.
-    It temporarily disables carrier equations to ensure stability.
-    """
-    print("\n" + "="*70)
-    print("STEP: SOLVING FOR POTENTIAL ONLY (INITIAL GUESS)")
-    print("="*70)
-
-    # Temporarily disable carrier equations by setting their update type to "frozen"
-    # This ensures they are not solved, but their values are still used in Poisson's eq.
-    regions = ds.get_region_list(device=device_name)
-    for region in regions:
-        ds.equation(device=device_name, region=region, name="ElectronContinuity", variable_name="Electrons", variable_update="frozen")
-        ds.equation(device=device_name, region=region, name="HoleContinuity", variable_name="Holes", variable_update="frozen")
-
-    try:
-        # Solve with a relatively loose error tolerance, it's just a guess
-        ds.solve(type="dc", absolute_error=1.0, relative_error=1e-10, maximum_iterations=30)
-        print("✓ Successfully solved for initial potential.")
-    except ds.error as msg:
-        print(f"✗ Convergence failed for potential-only solve: {msg}")
-        return False
-    finally:
-        # IMPORTANT: Re-enable the carrier equations for the fully coupled solve
-        for region in regions:
-            ds.equation(device=device_name, region=region, name="ElectronContinuity", variable_name="Electrons", variable_update="positive")
-            ds.equation(device=device_name, region=region, name="HoleContinuity", variable_name="Holes", variable_update="positive")
-
-    return True
 
 
 def solve_equilibrium(device_name):
     """
-    Solves the fully coupled drift-diffusion system for thermal equilibrium (V=0, G=0).
+    Solves the fully coupled drift-diffusion system for thermal equilibrium.
+    Uses robust multi-stage approach with forced carrier initialization.
     """
-    print("\n" + "="*70)
+    print("\n" + "=" * 70)
     print("STEP: SOLVING FULLY COUPLED SYSTEM IN EQUILIBRIUM")
-    print("="*70)
+    print("=" * 70)
 
-    # With good initial conditions from the setup, we can solve the coupled system directly.
+    # CRITICAL: Verify and fix carrier concentrations before solving
+    print("\nVerifying initial carrier concentrations...")
+    regions = ds.get_region_list(device=device_name)
+
+    for region in regions:
+        try:
+            n_vals = ds.get_node_model_values(device=device_name, region=region, name="Electrons")
+            p_vals = ds.get_node_model_values(device=device_name, region=region, name="Holes")
+            n_min = min(n_vals)
+            p_min = min(p_vals)
+            n_max = max(n_vals)
+            p_max = max(p_vals)
+            num_nodes = len(n_vals)
+
+            print(f"  {region}:")
+            print(f"    Nodes:     {num_nodes}")
+            print(f"    Electrons: min={n_min:.2e}, max={n_max:.2e}")
+            print(f"    Holes:     min={p_min:.2e}, max={p_max:.2e}")
+
+            # Check for problematic values
+            if n_min <= 0 or p_min <= 0 or n_min < 1e-10 or p_min < 1e-10:
+                print(f"    ⚠ WARNING: Non-positive or too-small carriers detected!")
+                print(f"    Forcing re-initialization of {region}...")
+
+                N_D = ds.get_parameter(device=device_name, region=region, name="N_D")
+                N_A = ds.get_parameter(device=device_name, region=region, name="N_A")
+                n_i = ds.get_parameter(device=device_name, name="n_i")
+
+                N_net = N_D - N_A
+
+                if N_net > 0:  # n-type
+                    n_init = max(N_net, 1e10)
+                    p_init = max(n_i ** 2 / N_net, 1e5)
+                else:  # p-type
+                    p_init = max(abs(N_net), 1e10)
+                    n_init = max(n_i ** 2 / abs(N_net), 1e5)
+
+                print(f"    Setting: n={n_init:.2e}, p={p_init:.2e} for ALL {num_nodes} nodes")
+
+                # CRITICAL FIX: Create array with values for ALL nodes
+                n_init_array = [n_init] * num_nodes
+                p_init_array = [p_init] * num_nodes
+
+                ds.set_node_values(
+                    device=device_name,
+                    region=region,
+                    name="Electrons",
+
+                    values=n_init_array
+                )
+
+                ds.set_node_values(
+                    device=device_name,
+                    region=region,
+                    name="Holes",
+
+                    values=p_init_array
+                )
+
+                # Verify the fix worked
+                n_check = ds.get_node_model_values(device=device_name, region=region, name="Electrons")
+                p_check = ds.get_node_model_values(device=device_name, region=region, name="Holes")
+                print(f"    After fix: n_min={min(n_check):.2e}, p_min={min(p_check):.2e}")
+
+                if min(n_check) <= 0 or min(p_check) <= 0:
+                    print(f"    ✗ ERROR: Still have zero carriers after fix!")
+                    return False
+            else:
+                print(f"    ✓ Carriers are positive and valid")
+
+        except Exception as e:
+            print(f"    ✗ Error checking/fixing {region}: {e}")
+            import traceback
+            traceback.print_exc()
+            return False
+
+    print("\n" + "─" * 70)
+    print("Starting multi-stage solve...")
+    print("─" * 70)
+
     try:
-        # The solver will handle the coupled Potential, Electrons, and Holes equations.
-        ds.solve(type="dc", absolute_error=1e10, relative_error=1e-12, maximum_iterations=30)
+        print("\nStage 1: Very relaxed convergence...")
+        ds.solve(type="dc", absolute_error=1e15, relative_error=1e-3, maximum_iterations=100)
+        print("✓ Stage 1 complete")
+
+        print("\nStage 2: Medium convergence...")
+        ds.solve(type="dc", absolute_error=1e12, relative_error=1e-6, maximum_iterations=100)
+        print("✓ Stage 2 complete")
+
+        print("\nStage 3: Tighter convergence...")
+        ds.solve(type="dc", absolute_error=1e10, relative_error=1e-10, maximum_iterations=100)
+        print("✓ Stage 3 complete")
+
+        print("\nStage 4: Final tight convergence...")
+        ds.solve(type="dc", absolute_error=1e8, relative_error=1e-12, maximum_iterations=100)
         print("✓ Successfully solved for thermal equilibrium.")
+
     except ds.error as msg:
-        print(f"✗ Convergence failed for equilibrium solve: {msg}")
-        # It's helpful to write the state to a file to debug if it fails
-        ds.write_devices(file="photodiode_FAILED.dat", type="tecplot")
+        print(f"\n✗ Convergence failed: {msg}")
+        try:
+            ds.write_devices(file="photodiode_FAILED.dat", type="tecplot")
+            print("  Wrote failed state to photodiode_FAILED.dat")
+        except:
+            pass
         return False
 
     return True
+
 
 def verify_and_plot_equilibrium(device_name, width):
     """
@@ -1406,73 +1850,83 @@ def verify_and_plot_equilibrium(device_name, width):
 
 
 def main():
-    """Main execution function with proper argument handling."""
+    """Main execution with split physics setup."""
+    import sys
+    import os
 
-    # Default mesh filename - MUST match gmesh_diode2d.py output
     default_mesh = "gmsh_diode2d.msh"
     width = 0.01
 
-    # Parse command-line arguments
     if len(sys.argv) > 2:
         print("=" * 70)
         print("ERROR: Too many arguments")
         print("=" * 70)
-        print("\nUsage:")
-        print(f"  python {sys.argv[0]} [mesh_file]")
-        print("\nExamples:")
-        print(f"  python {sys.argv[0]}                    # Uses default: {default_mesh}")
-        print(f"  python {sys.argv[0]} custom_mesh.msh   # Uses specified file")
-        print("=" * 70)
+        print(f"\nUsage: python {sys.argv[0]} [mesh_file]")
         sys.exit(1)
 
-    # Use provided mesh file or default
     mesh_file = sys.argv[1] if len(sys.argv) == 2 else default_mesh
 
     try:
-        # Setup the device
+        # PHASE 1: Setup device structure
+        print("\n" + "=" * 70)
+        print("PHASE 1: DEVICE STRUCTURE SETUP")
+        print("=" * 70)
         device_name = setup_photodiode_device(mesh_file)
+        print(f"\n✓ Device '{device_name}' structure ready!")
 
-        print(f"\n{'=' * 70}")
-        print(f"✓ SUCCESS: Device '{device_name}' is ready for equation setup!")
-        print(f"{'=' * 70}\n")
+        # PHASE 2: Add Poisson physics only
+        print("\n" + "=" * 70)
+        print("PHASE 2: POISSON PHYSICS SETUP")
+        print("=" * 70)
+        add_poisson_physics(device_name)
+
+        # PHASE 3: Solve Poisson only (optional but recommended)
+        print("\n" + "=" * 70)
+        print("PHASE 3: INITIAL POTENTIAL SOLVE")
+        print("=" * 70)
+        solve_poisson_only(device_name)
+
+        # PHASE 4: Add drift-diffusion physics
+        print("\n" + "=" * 70)
+        print("PHASE 4: DRIFT-DIFFUSION PHYSICS SETUP")
+        print("=" * 70)
+        add_drift_diffusion_physics(device_name)
+
+        # PHASE 5: Solve equilibrium (fully coupled)
+        print("\n" + "=" * 70)
+        print("PHASE 5: EQUILIBRIUM SOLVE")
+        print("=" * 70)
+        success = solve_equilibrium(device_name)
+        if not success:
+            print("\n❌ FATAL: Equilibrium solve failed!")
+            sys.exit(1)
+
+        # PHASE 6: Verify and visualize
+        print("\n" + "=" * 70)
+        print("PHASE 6: VERIFICATION & VISUALIZATION")
+        print("=" * 70)
+        verify_and_plot_equilibrium(device_name, width)
+
+        print("\n" + "=" * 70)
+        print("🎉 SIMULATION COMPLETE!")
+        print("=" * 70)
+        print("\n📊 Output files:")
+        print("  • photodiode_equilibrium.vtk")
+        print("  • photodiode_equilibrium_plots.png")
+        print("=" * 70 + "\n")
 
     except FileNotFoundError as e:
-        print(f"\n{'=' * 70}")
-        print(f"✗ FILE ERROR")
-        print(f"{'=' * 70}")
-        print(f"\n{e}")
-        print(f"\nTo generate the mesh, run:")
-        print(f"  python gmesh_diode2d.py")
-        print(f"{'=' * 70}\n")
+        print(f"\n❌ FILE ERROR: {e}")
+        print(f"To generate mesh: python gmesh_diode2d.py\n")
         sys.exit(1)
-
     except ValueError as e:
-        print(f"\n{'=' * 70}")
-        print(f"✗ STRUCTURE ERROR")
-        print(f"{'=' * 70}")
-        print(f"\n{e}")
-        print(f"{'=' * 70}\n")
+        print(f"\n❌ STRUCTURE ERROR: {e}\n")
         sys.exit(1)
-
     except Exception as e:
-        print(f"\n{'=' * 70}")
-        print(f"✗ UNEXPECTED ERROR")
-        print(f"{'=' * 70}")
-        print(f"\n{e}")
-        print("\nFull traceback:")
+        print(f"\n❌ UNEXPECTED ERROR: {e}")
         import traceback
         traceback.print_exc()
-        print(f"{'=' * 70}\n")
         sys.exit(1)
-
-
-
-    #Add physics
-    add_physics(device_name)
-
-    #Solve Equilibrium
-    solve_equilibrium(device_name)
-    verify_and_plot_equilibrium(device_name, width)
 
 
 if __name__ == "__main__":
