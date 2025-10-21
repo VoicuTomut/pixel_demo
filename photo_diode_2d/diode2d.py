@@ -12,6 +12,8 @@ import devsim as ds
 import math
 import sys
 import os
+import matplotlib.pyplot as plt
+import numpy as np
 
 
 def setup_photodiode_device(mesh_file):
@@ -494,172 +496,167 @@ def set_initial_conditions(device_name, region):
 
 def build_electric_field_model(device_name, region):
     """
-        Build electric field vector model: E = -∇ψ
+    Build the electric field vector model: E = -∇ψ.
 
-        The electric field is calculated as the negative gradient of the potential:
-        E_x = -∂ψ/∂x
-        E_y = -∂ψ/∂y
+    The electric field component along each mesh edge is calculated as the
+    negative potential difference divided by the edge length. This is a
+    more general and physically correct approach for 2D/3D simulations.
 
-        Args:
-            device_name: Device identifier
-            region: Region name
-        """
+    Args:
+        device_name: Device identifier
+        region: Region name
+    """
     print(f"    Building electric field model...")
 
-    # Electric field components (edge models for better accuracy)
-    # E_x component
+    # Makes Potential@n0 and Potential@n1 available on each edge
     ds.edge_from_node_model(
         device=device_name,
         region=region,
         node_model="Potential"
     )
 
+    # CORRECTED: Use "ElectricField" for the general component along the edge
+    # and "EdgeInverseLength" for 1/L to correctly calculate E = -dV/dL.
     ds.edge_model(
         device=device_name,
         region=region,
-        name="ElectricField_x",
-        equation="-(Potential@n1 - Potential@n0) * EdgeCouple"
+        name="ElectricField",
+        equation="(Potential@n0 - Potential@n1) * EdgeInverseLength"
     )
 
-    # Derivatives for node-based electric field (used in drift-diffusion)
+    # Derivatives for the corrected electric field model
     ds.edge_model(
         device=device_name,
         region=region,
-        name="ElectricField_x:Potential@n0",
-        equation="EdgeCouple"
+        name="ElectricField:Potential@n0",
+        equation="EdgeInverseLength"
     )
 
     ds.edge_model(
         device=device_name,
         region=region,
-        name="ElectricField_x:Potential@n1",
-        equation="-EdgeCouple"
+        name="ElectricField:Potential@n1",
+        equation="-EdgeInverseLength"
     )
 
     print(f"      ✓ Electric field E = -∇ψ created")
 
+
 def build_drift_diffusion_model(device_name, region):
     """
-    Build drift-diffusion current density models:
-    J_n = q·μ_n·n·E + q·D_n·∇n  (electron current)
-    J_p = q·μ_p·p·E - q·D_p·∇p  (hole current)
-
-    Args:
-        device_name: Device identifier
-        region: Region name
+    Builds Scharfetter-Gummel drift-diffusion with EXPLICIT DERIVATIVES.
+    CRITICAL: DEVSIM cannot auto-differentiate Bernoulli functions!
     """
-    print(f"    Building drift-diffusion models...")
+    print(f"    Building Scharfetter-Gummel drift-diffusion models...")
 
-    # Get parameters
+    # Get material parameters
     mu_n = ds.get_parameter(device=device_name, region=region, name="mu_n")
     mu_p = ds.get_parameter(device=device_name, region=region, name="mu_p")
-    T = ds.get_parameter(device=device_name, name="T")
     q = ds.get_parameter(device=device_name, name="q")
-    k_B = ds.get_parameter(device=device_name, name="k_B")
+    V_t = ds.get_parameter(device=device_name, name="V_t")
 
-    # Calculate diffusion coefficients using Einstein relation
-    V_t = k_B * T / q  # Thermal voltage
-    D_n = mu_n * V_t
-    D_p = mu_p * V_t
+    # Potential difference over thermal voltage
+    ds.edge_model(
+        device=device_name,
+        region=region,
+        name="V_diff_over_V_t",
+        equation="(Potential@n0 - Potential@n1)/V_t"
+    )
 
-    # Store diffusion coefficients as parameters
-    ds.set_parameter(device=device_name, region=region, name="D_n", value=D_n)
-    ds.set_parameter(device=device_name, region=region, name="D_p", value=D_p)
+    # Make carrier concentrations available on edges
+    ds.edge_from_node_model(device=device_name, region=region, node_model="Electrons")
+    ds.edge_from_node_model(device=device_name, region=region, node_model="Holes")
 
-    # Electron current density (edge model)
-    # Drift component: q·μ_n·n·E
-    # Diffusion component: q·D_n·∇n
+    # ============================================================
+    # ELECTRON CURRENT with DERIVATIVES
+    # ============================================================
     ds.edge_model(
         device=device_name,
         region=region,
         name="ElectronCurrent",
-        equation=f"q*{mu_n}*EdgeInverseLength*Electrons@n0*ElectricField_x + "
-                 f"q*{D_n}*EdgeInverseLength*(Electrons@n1 - Electrons@n0)"
+        equation=f"{q}*{mu_n}*{V_t}*EdgeInverseLength*(Electrons@n0*B(V_diff_over_V_t) - Electrons@n1*B(-V_diff_over_V_t))"
     )
 
-    # Derivatives for Newton solver
-    ds.edge_model(
-        device=device_name,
-        region=region,
-        name="ElectronCurrent:Electrons@n0",
-        equation=f"q*{mu_n}*EdgeInverseLength*ElectricField_x - q*{D_n}*EdgeInverseLength"
-    )
-
-    ds.edge_model(
-        device=device_name,
-        region=region,
-        name="ElectronCurrent:Electrons@n1",
-        equation=f"q*{D_n}*EdgeInverseLength"
-    )
-
+    # Derivative w.r.t. Potential@n0
     ds.edge_model(
         device=device_name,
         region=region,
         name="ElectronCurrent:Potential@n0",
-        equation=f"q*{mu_n}*EdgeInverseLength*Electrons@n0*ElectricField_x:Potential@n0"
+        equation=f"{q}*{mu_n}*EdgeInverseLength*(Electrons@n0*dBdx(V_diff_over_V_t) + Electrons@n1*dBdx(-V_diff_over_V_t))"
     )
 
+    # Derivative w.r.t. Potential@n1
     ds.edge_model(
         device=device_name,
         region=region,
         name="ElectronCurrent:Potential@n1",
-        equation=f"q*{mu_n}*EdgeInverseLength*Electrons@n0*ElectricField_x:Potential@n1"
+        equation=f"-{q}*{mu_n}*EdgeInverseLength*(Electrons@n0*dBdx(V_diff_over_V_t) + Electrons@n1*dBdx(-V_diff_over_V_t))"
     )
 
-    # Hole current density (edge model)
-    # Drift component: q·μ_p·p·E
-    # Diffusion component: -q·D_p·∇p
+    # Derivative w.r.t. Electrons@n0
+    ds.edge_model(
+        device=device_name,
+        region=region,
+        name="ElectronCurrent:Electrons@n0",
+        equation=f"{q}*{mu_n}*{V_t}*EdgeInverseLength*B(V_diff_over_V_t)"
+    )
+
+    # Derivative w.r.t. Electrons@n1
+    ds.edge_model(
+        device=device_name,
+        region=region,
+        name="ElectronCurrent:Electrons@n1",
+        equation=f"-{q}*{mu_n}*{V_t}*EdgeInverseLength*B(-V_diff_over_V_t)"
+    )
+
+    # ============================================================
+    # HOLE CURRENT with DERIVATIVES
+    # ============================================================
     ds.edge_model(
         device=device_name,
         region=region,
         name="HoleCurrent",
-        equation=f"q*{mu_p}*EdgeInverseLength*Holes@n0*ElectricField_x - "
-                 f"q*{D_p}*EdgeInverseLength*(Holes@n1 - Holes@n0)"
+        equation=f"-{q}*{mu_p}*{V_t}*EdgeInverseLength*(Holes@n1*B(V_diff_over_V_t) - Holes@n0*B(-V_diff_over_V_t))"
     )
 
-    # Derivatives for Newton solver
-    ds.edge_model(
-        device=device_name,
-        region=region,
-        name="HoleCurrent:Holes@n0",
-        equation=f"q*{mu_p}*EdgeInverseLength*ElectricField_x + q*{D_p}*EdgeInverseLength"
-    )
-
-    ds.edge_model(
-        device=device_name,
-        region=region,
-        name="HoleCurrent:Holes@n1",
-        equation=f"-q*{D_p}*EdgeInverseLength"
-    )
-
+    # Derivative w.r.t. Potential@n0
     ds.edge_model(
         device=device_name,
         region=region,
         name="HoleCurrent:Potential@n0",
-        equation=f"q*{mu_p}*EdgeInverseLength*Holes@n0*ElectricField_x:Potential@n0"
+        equation=f"-{q}*{mu_p}*EdgeInverseLength*(Holes@n1*dBdx(V_diff_over_V_t) + Holes@n0*dBdx(-V_diff_over_V_t))"
     )
 
+    # Derivative w.r.t. Potential@n1
     ds.edge_model(
         device=device_name,
         region=region,
         name="HoleCurrent:Potential@n1",
-        equation=f"q*{mu_p}*EdgeInverseLength*Holes@n0*ElectricField_x:Potential@n1"
+        equation=f"{q}*{mu_p}*EdgeInverseLength*(Holes@n1*dBdx(V_diff_over_V_t) + Holes@n0*dBdx(-V_diff_over_V_t))"
     )
 
-    print(f"      ✓ Drift-diffusion currents J_n and J_p created")
+    # Derivative w.r.t. Holes@n0
+    ds.edge_model(
+        device=device_name,
+        region=region,
+        name="HoleCurrent:Holes@n0",
+        equation=f"{q}*{mu_p}*{V_t}*EdgeInverseLength*B(-V_diff_over_V_t)"
+    )
 
-def build_recombination_model(device_name, region, srh=True, radiative=False, auger=False):
+    # Derivative w.r.t. Holes@n1
+    ds.edge_model(
+        device=device_name,
+        region=region,
+        name="HoleCurrent:Holes@n1",
+        equation=f"-{q}*{mu_p}*{V_t}*EdgeInverseLength*B(V_diff_over_V_t)"
+    )
+
+    print(f"      ✓ Scharfetter-Gummel currents J_n and J_p created WITH DERIVATIVES")
+
+
+def build_recombination_model(device_name, region, srh=True, radiative=True, auger=True):
     """
-    Build recombination rate models.
-
-    Total recombination: U = U_SRH + U_radiative + U_Auger
-
-    Args:
-        device_name: Device identifier
-        region: Region name
-        srh: Enable Shockley-Read-Hall recombination
-        radiative: Enable radiative recombination
-        auger: Enable Auger recombination
+    Builds recombination models WITH REQUIRED DERIVATIVES.
     """
     print(f"    Building recombination models...")
 
@@ -667,121 +664,127 @@ def build_recombination_model(device_name, region, srh=True, radiative=False, au
     n_i = ds.get_parameter(device=device_name, name="n_i")
     tau_n = ds.get_parameter(device=device_name, region=region, name="tau_n")
     tau_p = ds.get_parameter(device=device_name, region=region, name="tau_p")
+    n_i_sq = n_i ** 2
 
-    # Initialize total recombination
-    U_total = "0"
-
-    # 1. Shockley-Read-Hall (SRH) Recombination
+    # 1. SRH Recombination
     if srh:
-        # n1 and p1 for mid-gap trap level (E_t = E_i)
-        n1 = n_i
-        p1 = n_i
+        n1, p1 = n_i, n_i
 
-        # U_SRH = (n*p - n_i^2) / (tau_p*(n + n1) + tau_n*(p + p1))
         ds.node_model(
-            device=device_name,
-            region=region,
-            name="U_SRH",
-            equation=f"(Electrons*Holes - {n_i}^2) / "
-                     f"({tau_p}*(Electrons + {n1}) + {tau_n}*(Holes + {p1}))"
+            device=device_name, region=region, name="U_SRH",
+            equation=f"(Electrons*Holes - {n_i_sq}) / ({tau_p}*(Electrons + {n1}) + {tau_n}*(Holes + {p1}))"
         )
 
-        # Derivatives for Newton solver
+        # SRH derivatives
         ds.node_model(
-            device=device_name,
-            region=region,
-            name="U_SRH:Electrons",
-            equation=f"diff(U_SRH, Electrons)"
+            device=device_name, region=region, name="U_SRH:Electrons",
+            equation=f"(Holes*({tau_p}*(Electrons+{n1})+{tau_n}*(Holes+{p1})) - (Electrons*Holes-{n_i_sq})*{tau_p}) / (({tau_p}*(Electrons+{n1})+{tau_n}*(Holes+{p1}))^2)"
         )
 
         ds.node_model(
-            device=device_name,
-            region=region,
-            name="U_SRH:Holes",
-            equation=f"diff(U_SRH, Holes)"
+            device=device_name, region=region, name="U_SRH:Holes",
+            equation=f"(Electrons*({tau_p}*(Electrons+{n1})+{tau_n}*(Holes+{p1})) - (Electrons*Holes-{n_i_sq})*{tau_n}) / (({tau_p}*(Electrons+{n1})+{tau_n}*(Holes+{p1}))^2)"
         )
 
-        U_total += " + U_SRH"
-        print(f"      ✓ SRH recombination added")
+        ds.node_model(
+            device=device_name, region=region, name="U_SRH:Potential",
+            equation="0"
+        )
 
-    # 2. Radiative Recombination (optional)
+        print(f"      ✓ SRH recombination added WITH DERIVATIVES")
+
+    # 2. Radiative Recombination
     if radiative:
-        B_rad = 1.0e-14  # Radiative recombination coefficient [cm^3/s]
+        B_rad = 1.0e-14
 
         ds.node_model(
-            device=device_name,
-            region=region,
-            name="U_radiative",
-            equation=f"{B_rad}*(Electrons*Holes - {n_i}^2)"
+            device=device_name, region=region, name="U_radiative",
+            equation=f"{B_rad}*(Electrons*Holes - {n_i_sq})"
         )
 
         ds.node_model(
-            device=device_name,
-            region=region,
-            name="U_radiative:Electrons",
+            device=device_name, region=region, name="U_radiative:Electrons",
             equation=f"{B_rad}*Holes"
         )
 
         ds.node_model(
-            device=device_name,
-            region=region,
-            name="U_radiative:Holes",
+            device=device_name, region=region, name="U_radiative:Holes",
             equation=f"{B_rad}*Electrons"
         )
 
-        U_total += " + U_radiative"
-        print(f"      ✓ Radiative recombination added")
+        ds.node_model(
+            device=device_name, region=region, name="U_radiative:Potential",
+            equation="0"
+        )
 
-    # 3. Auger Recombination (optional)
+        print(f"      ✓ Radiative recombination added WITH DERIVATIVES")
+
+    # 3. Auger Recombination
     if auger:
-        C_n = 2.8e-31  # Auger coefficient for electrons [cm^6/s]
-        C_p = 9.9e-32  # Auger coefficient for holes [cm^6/s]
+        C_n, C_p = 2.8e-31, 9.9e-32
 
         ds.node_model(
-            device=device_name,
-            region=region,
-            name="U_Auger",
-            equation=f"({C_n}*Electrons + {C_p}*Holes)*(Electrons*Holes - {n_i}^2)"
+            device=device_name, region=region, name="U_Auger",
+            equation=f"({C_n}*Electrons + {C_p}*Holes)*(Electrons*Holes - {n_i_sq})"
         )
 
         ds.node_model(
-            device=device_name,
-            region=region,
-            name="U_Auger:Electrons",
-            equation=f"diff(U_Auger, Electrons)"
+            device=device_name, region=region, name="U_Auger:Electrons",
+            equation=f"{C_n}*(Electrons*Holes - {n_i_sq}) + ({C_n}*Electrons + {C_p}*Holes)*Holes"
         )
 
         ds.node_model(
-            device=device_name,
-            region=region,
-            name="U_Auger:Holes",
-            equation=f"diff(U_Auger, Holes)"
+            device=device_name, region=region, name="U_Auger:Holes",
+            equation=f"{C_p}*(Electrons*Holes - {n_i_sq}) + ({C_n}*Electrons + {C_p}*Holes)*Electrons"
         )
 
+        ds.node_model(
+            device=device_name, region=region, name="U_Auger:Potential",
+            equation="0"
+        )
+
+        print(f"      ✓ Auger recombination added WITH DERIVATIVES")
+
+    # Total Recombination
+    U_total = "0"
+    dU_n = "0"
+    dU_p = "0"
+
+    if srh:
+        U_total += " + U_SRH"
+        dU_n += " + U_SRH:Electrons"
+        dU_p += " + U_SRH:Holes"
+    if radiative:
+        U_total += " + U_radiative"
+        dU_n += " + U_radiative:Electrons"
+        dU_p += " + U_radiative:Holes"
+    if auger:
         U_total += " + U_Auger"
-        print(f"      ✓ Auger recombination added")
+        dU_n += " + U_Auger:Electrons"
+        dU_p += " + U_Auger:Holes"
 
-    # Create total recombination model
     ds.node_model(
-        device=device_name,
-        region=region,
+        device=device_name, region=region,
         name="Recombination",
         equation=U_total
     )
 
-    # Derivatives
     ds.node_model(
-        device=device_name,
-        region=region,
+        device=device_name, region=region,
         name="Recombination:Electrons",
-        equation=f"diff(Recombination, Electrons)"
+        equation=dU_n
     )
 
     ds.node_model(
-        device=device_name,
-        region=region,
+        device=device_name, region=region,
         name="Recombination:Holes",
-        equation=f"diff(Recombination, Holes)"
+        equation=dU_p
+    )
+
+    ds.node_model(
+        device=device_name, region=region,
+        name="Recombination:Potential",
+        equation="0"
     )
 
 def construct_poisson_eq(device_name, region):
@@ -840,21 +843,21 @@ def construct_poisson_eq(device_name, region):
         device=device_name,
         region=region,
         name="ElectricFlux",
-        equation=f"{epsilon}*ElectricField_x"
+        equation=f"{epsilon}*ElectricField"
     )
 
     ds.edge_model(
         device=device_name,
         region=region,
         name="ElectricFlux:Potential@n0",
-        equation=f"{epsilon}*ElectricField_x:Potential@n0"
+        equation=f"{epsilon}*ElectricField:Potential@n0"
     )
 
     ds.edge_model(
         device=device_name,
         region=region,
         name="ElectricFlux:Potential@n1",
-        equation=f"{epsilon}*ElectricField_x:Potential@n1"
+        equation=f"{epsilon}*ElectricField:Potential@n1"
     )
 
     # Add equation to solver
@@ -873,12 +876,7 @@ def construct_poisson_eq(device_name, region):
 
 def construct_electron_continuity_eq(device_name, region):
     """
-    Construct electron continuity equation:
-    (1/q)∇·J_n = U - G
-
-    Args:
-        device_name: Device identifier
-        region: Region name
+    Construct electron continuity equation: ∇·J_n - q(U - G) = 0
     """
     print(f"    Constructing electron continuity equation...")
 
@@ -890,27 +888,22 @@ def construct_electron_continuity_eq(device_name, region):
         equation="0.0"
     )
 
-    # Net generation-recombination: R = U - G
+    # Net recombination term for the equation: S = -q * (U - G)
     ds.node_model(
         device=device_name,
         region=region,
-        name="ElectronNetRecombination",
-        equation="Recombination - OpticalGeneration"
+        name="ElectronGenerationSource",
+        equation="-q * (Recombination - OpticalGeneration)"
     )
 
-    ds.node_model(
-        device=device_name,
-        region=region,
-        name="ElectronNetRecombination:Electrons",
-        equation="Recombination:Electrons"
-    )
+    # Derivatives of the source term
+    ds.node_model(device=device_name, region=region, name="ElectronGenerationSource:Electrons",
+                  equation="-q * Recombination:Electrons")
+    ds.node_model(device=device_name, region=region, name="ElectronGenerationSource:Holes",
+                  equation="-q * Recombination:Holes")
+    ds.node_model(device=device_name, region=region, name="ElectronGenerationSource:Potential",
+                  equation="-q * Recombination:Potential")
 
-    ds.node_model(
-        device=device_name,
-        region=region,
-        name="ElectronNetRecombination:Holes",
-        equation="Recombination:Holes"
-    )
 
     # Add equation to solver
     ds.equation(
@@ -919,45 +912,35 @@ def construct_electron_continuity_eq(device_name, region):
         name="ElectronContinuity",
         variable_name="Electrons",
         edge_model="ElectronCurrent",
-        edge_volume_model="",
-        node_model="ElectronNetRecombination",
-        variable_update="positive"  # Keep electron concentration positive
+        node_model="ElectronGenerationSource",
+        variable_update="positive"
     )
 
-    print(f"      ✓ Electron continuity: (1/q)∇·J_n = U - G")
+    print(f"      ✓ Electron continuity: ∇·J_n - q(U-G) = 0")
 
 def construct_hole_continuity_eq(device_name, region):
     """
-    Construct hole continuity equation:
-    -(1/q)∇·J_p = U - G
-
-    Args:
-        device_name: Device identifier
-        region: Region name
+    Construct hole continuity equation: ∇·J_p + q(U - G) = 0
     """
     print(f"    Constructing hole continuity equation...")
 
-    # Net generation-recombination: R = U - G
+    # Net recombination term for the equation: S = q * (U - G)
+    # OpticalGeneration is already defined in the electron continuity function
     ds.node_model(
         device=device_name,
         region=region,
-        name="HoleNetRecombination",
-        equation="Recombination - OpticalGeneration"
+        name="HoleGenerationSource",
+        equation="q * (Recombination - OpticalGeneration)"
     )
 
-    ds.node_model(
-        device=device_name,
-        region=region,
-        name="HoleNetRecombination:Electrons",
-        equation="Recombination:Electrons"
-    )
+    # Derivatives of the source term
+    ds.node_model(device=device_name, region=region, name="HoleGenerationSource:Electrons",
+                  equation="q * Recombination:Electrons")
+    ds.node_model(device=device_name, region=region, name="HoleGenerationSource:Holes",
+                  equation="q * Recombination:Holes")
+    ds.node_model(device=device_name, region=region, name="HoleGenerationSource:Potential",
+                  equation="q * Recombination:Potential")
 
-    ds.node_model(
-        device=device_name,
-        region=region,
-        name="HoleNetRecombination:Holes",
-        equation="Recombination:Holes"
-    )
 
     # Add equation to solver
     ds.equation(
@@ -966,13 +949,11 @@ def construct_hole_continuity_eq(device_name, region):
         name="HoleContinuity",
         variable_name="Holes",
         edge_model="HoleCurrent",
-        edge_volume_model="",
-        node_model="HoleNetRecombination",
-        variable_update="positive"  # Keep hole concentration positive
+        node_model="HoleGenerationSource",
+        variable_update="positive"
     )
 
-    print(f"      ✓ Hole continuity: -(1/q)∇·J_p = U - G")
-
+    print(f"      ✓ Hole continuity: ∇·J_p + q(U-G) = 0")
 
 def add_ohmic_contact(device_name, contact_name, region_name, bias=0.0):
     """
@@ -1061,7 +1042,7 @@ def add_ohmic_contact(device_name, contact_name, region_name, bias=0.0):
         contact=contact_name,
         name="PoissonEquation",
         node_model=f"{contact_name}_bc",
-        edge_charge_model="DField"
+        edge_charge_model="ElectricFlux"
     )
 
     ds.contact_equation(
@@ -1264,23 +1245,172 @@ def add_physics(device_name):
 
     return device_name
 
-def set_variables(device_name):
-    """
-    A. Primary Solution Variables (Node Models):
-         - Potential: $\psi(x, y)$
-         - Electrons: $n(x, y)$
-         - Holes: $p(x, y)$
 
-    :param device_name:
-    :return:
+def solve_potential_v0(device_name):
     """
-    return device_name
+    Solves for the potential only as an initial guess.
+    It temporarily disables carrier equations to ensure stability.
+    """
+    print("\n" + "="*70)
+    print("STEP: SOLVING FOR POTENTIAL ONLY (INITIAL GUESS)")
+    print("="*70)
+
+    # Temporarily disable carrier equations by setting their update type to "frozen"
+    # This ensures they are not solved, but their values are still used in Poisson's eq.
+    regions = ds.get_region_list(device=device_name)
+    for region in regions:
+        ds.equation(device=device_name, region=region, name="ElectronContinuity", variable_name="Electrons", variable_update="frozen")
+        ds.equation(device=device_name, region=region, name="HoleContinuity", variable_name="Holes", variable_update="frozen")
+
+    try:
+        # Solve with a relatively loose error tolerance, it's just a guess
+        ds.solve(type="dc", absolute_error=1.0, relative_error=1e-10, maximum_iterations=30)
+        print("✓ Successfully solved for initial potential.")
+    except ds.error as msg:
+        print(f"✗ Convergence failed for potential-only solve: {msg}")
+        return False
+    finally:
+        # IMPORTANT: Re-enable the carrier equations for the fully coupled solve
+        for region in regions:
+            ds.equation(device=device_name, region=region, name="ElectronContinuity", variable_name="Electrons", variable_update="positive")
+            ds.equation(device=device_name, region=region, name="HoleContinuity", variable_name="Holes", variable_update="positive")
+
+    return True
+
+
+def solve_equilibrium(device_name):
+    """
+    Solves the fully coupled drift-diffusion system for thermal equilibrium (V=0, G=0).
+    """
+    print("\n" + "="*70)
+    print("STEP: SOLVING FULLY COUPLED SYSTEM IN EQUILIBRIUM")
+    print("="*70)
+
+    # With good initial conditions from the setup, we can solve the coupled system directly.
+    try:
+        # The solver will handle the coupled Potential, Electrons, and Holes equations.
+        ds.solve(type="dc", absolute_error=1e10, relative_error=1e-12, maximum_iterations=30)
+        print("✓ Successfully solved for thermal equilibrium.")
+    except ds.error as msg:
+        print(f"✗ Convergence failed for equilibrium solve: {msg}")
+        # It's helpful to write the state to a file to debug if it fails
+        ds.write_devices(file="photodiode_FAILED.dat", type="tecplot")
+        return False
+
+    return True
+
+def verify_and_plot_equilibrium(device_name, width):
+    """
+    Performs checks and creates plots to verify the equilibrium solution.
+
+    Args:
+        device_name: The device to analyze.
+        width: The device width in cm (from gmesh_diode2d.py) for the line cut.
+    """
+    print("\n" + "="*70)
+    print("STEP: VERIFYING AND PLOTTING EQUILIBRIUM SOLUTION")
+    print("="*70)
+
+    # 1. Verification: Check contact charge balance
+    try:
+        charge_anode = ds.get_contact_charge(device=device_name, contact="anode", equation="PoissonEquation")
+        charge_cathode = ds.get_contact_charge(device=device_name, contact="cathode", equation="PoissonEquation")
+        print("✓ Verification Checks:")
+        print(f"  - Anode Charge:   {charge_anode:.4e} C/m")
+        print(f"  - Cathode Charge: {charge_cathode:.4e} C/m")
+        if abs(charge_anode) > 1e-30:  # Check if charge is non-zero
+            if abs(charge_anode + charge_cathode) / abs(charge_anode) < 1e-5:
+                print("  - INFO: Charge balance is excellent. 👍")
+            else:
+                print("  - WARNING: Significant charge imbalance detected. 🚩")
+        else:
+            print("  - WARNING: Contact charge is zero. The simulation may have failed to converge. 🚩")
+    except ds.error as msg:
+        print(f"✗ Could not retrieve contact charge: {msg}")
+
+
+    # 2. Visualization: Save 2D data for ParaView
+    print("\n✓ Visualization:")
+    try:
+        ds.write_devices(file="photodiode_equilibrium.vtk", type="vtk")
+        print("  - Saved 2D solution to photodiode_equilibrium.vtk for ParaView.")
+    except ds.error as msg:
+        print(f"✗ Failed to write VTK file: {msg}")
+
+
+    # 3. Plotting: Create 1D line cuts
+    print("  - Generating 1D line cut plots...")
+    try:
+        # Get all nodes and their y-coordinates for all regions
+        all_y_coords = []
+        all_potential = []
+        all_electrons = []
+        all_holes = []
+
+        for region in ds.get_region_list(device=device_name):
+            # Get node coordinates and variables
+            x_coords = ds.get_node_model_values(device=device_name, region=region, name="x")
+            y_coords = ds.get_node_model_values(device=device_name, region=region, name="y")
+            potential = ds.get_node_model_values(device=device_name, region=region, name="Potential")
+            electrons = ds.get_node_model_values(device=device_name, region=region, name="Electrons")
+            holes = ds.get_node_model_values(device=device_name, region=region, name="Holes")
+
+            # Filter for nodes in the center of the device
+            center_x = width / 2.0
+            tolerance = 1e-9
+            for i, x in enumerate(x_coords):
+                if abs(x - center_x) < tolerance:
+                    all_y_coords.append(y_coords[i])
+                    all_potential.append(potential[i])
+                    all_electrons.append(electrons[i])
+                    all_holes.append(holes[i])
+
+        if not all_y_coords:
+            print("  - WARNING: Could not find any nodes at the device center for plotting. 🚩")
+            return
+
+        # Sort the data by y-coordinate for clean plotting
+        sorted_indices = np.argsort(all_y_coords)
+        y = np.array(all_y_coords)[sorted_indices]
+        V = np.array(all_potential)[sorted_indices]
+        n = np.array(all_electrons)[sorted_indices]
+        p = np.array(all_holes)[sorted_indices]
+
+        # Create plots
+        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 5))
+        fig.suptitle('Equilibrium Solution (Vertical Cut at x = width/2)', fontsize=16)
+
+        # Potential Plot
+        ax1.plot(y * 1e4, V, 'r-', lw=2) # Convert y from cm to µm
+        ax1.set_xlabel('Depth (µm)')
+        ax1.set_ylabel('Potential (V)')
+        ax1.set_title('Electrostatic Potential')
+        ax1.grid(True)
+
+        # Carrier Concentration Plot
+        ax2.semilogy(y * 1e4, n, 'b-', lw=2, label='Electrons ($n$)')
+        ax2.semilogy(y * 1e4, p, 'g-', lw=2, label='Holes ($p$)')
+        ax2.set_xlabel('Depth (µm)')
+        ax2.set_ylabel('Carrier Concentration (cm⁻³)')
+        ax2.set_title('Carrier Concentrations (Log Scale)')
+        ax2.legend()
+        ax2.grid(True)
+
+        plt.tight_layout(rect=[0, 0.03, 1, 0.95])
+        plt.savefig("photodiode_equilibrium_plots.png")
+        print("  - Saved 1D plots to photodiode_equilibrium_plots.png.")
+        # plt.show() # Uncomment to display plots interactively
+
+    except Exception as e:
+        print(f"✗ An error occurred during plotting: {e}")
+
 
 def main():
     """Main execution function with proper argument handling."""
 
     # Default mesh filename - MUST match gmesh_diode2d.py output
     default_mesh = "gmsh_diode2d.msh"
+    width = 0.01
 
     # Parse command-line arguments
     if len(sys.argv) > 2:
@@ -1335,10 +1465,15 @@ def main():
         print(f"{'=' * 70}\n")
         sys.exit(1)
 
-    #
-    device_name = setup_photodiode_device(mesh_file)
-    
+
+
+    #Add physics
     add_physics(device_name)
+
+    #Solve Equilibrium
+    solve_equilibrium(device_name)
+    verify_and_plot_equilibrium(device_name, width)
+
 
 if __name__ == "__main__":
     main()
