@@ -1532,8 +1532,18 @@ def solve_equilibrium(device_name):
     print("─" * 70)
 
     try:
+
+
+        # =================================================================
+        # NEWTON SOLVE
+        # =================================================================
+
+        print("\nStage 0: Very relaxed convergence...")
+        ds.solve(type="dc", absolute_error=1e12, relative_error=1, maximum_iterations=200)
+        print("✓ Stage 0 complete")
+
         print("\nStage 1: Very relaxed convergence...")
-        ds.solve(type="dc", absolute_error=1e10, relative_error=1e-3, maximum_iterations=500)
+        ds.solve(type="dc", absolute_error=1e10, relative_error=1e-3, maximum_iterations=200)
         print("✓ Stage 1 complete")
 
         print("\nStage 2: Medium convergence...")
