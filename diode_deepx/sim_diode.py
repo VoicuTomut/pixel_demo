@@ -6,6 +6,8 @@ import time
 import torch
 
 # HACK: Overwrite the MPS availability check to return False.
+# This "hides" the Apple Silicon GPU from DeepXDE, forcing it to choose CPU.
+# This prevents driver bugs associated with high-order derivatives on Mac.
 try:
     torch.backends.mps.is_available = lambda: False
     print("✓ Patched torch.backends.mps.is_available to False (Forcing CPU)")
@@ -62,10 +64,13 @@ class Scaling:
     L_scale = 1e-4  # 1 micron = 1e-4 cm
     N_ref = 1e18
     
+    # Poisson Scale: q*N / eps ~ 1e11
     scale_poisson = (PhysicsConstants.q * N_ref) / PhysicsConstants.epsilon
     
-    # Dynamic Transport Scale (~1e29)
-    _transport_mag = PhysicsConstants.mu_n * PhysicsConstants.V_t * N_ref / (L_scale**2)
+    # Continuity Scale (Dynamic Calculation):
+    # Transport term magnitude ~ mu * Vt * N / L^2 ~ 1e29
+    # We calculate this dynamically to avoid "magic numbers"
+    _transport_mag = PhysicsConstants.mu_n * 1.0 * N_ref / (L_scale**2)
     scale_continuity = _transport_mag 
     
     @staticmethod
@@ -120,7 +125,9 @@ class PhotodiodePhysics:
         
         limit = 20.0
         
-        # FIX: Always use network outputs for Quasi-Fermi levels
+        # ALWAYS use network predicted levels.
+        # We do NOT override them with zeros manually anymore (Fixing the "bump").
+        # Instead, we use the loss function to force them to zero in equilibrium.
         phi_n_phys = phi_n
         phi_p_phys = phi_p
 
@@ -137,20 +144,21 @@ class PhotodiodePhysics:
         
         res_poisson = (PhysicsConstants.epsilon * lap_psi + rho) / Scaling.scale_poisson
 
-        # Symmetry Regularization (Soft guide for 1D bulk behavior)
-        res_symmetry = grad_psi_x * 0.1 
+        # Symmetry Regularization (Weight 1.0 helps flatten slanted 2D contours)
+        res_symmetry = grad_psi_x * 1.0 
 
-        # --- Equilibrium Mode: Gradient Penalty Strategy ---
+        # --- Equilibrium Mode: Strict Penalty Strategy ---
         if self.equilibrium_mode:
-            # Force flat Quasi-Fermi levels (Zero Current condition)
+            # At equilibrium (0V, Dark), current is zero (grad phi = 0) AND potential is flat (phi = 0)
             grad_phin_x = dde.grad.jacobian(phi_n, x, i=0, j=0)
             grad_phin_y = dde.grad.jacobian(phi_n, x, i=0, j=1)
             grad_phip_x = dde.grad.jacobian(phi_p, x, i=0, j=0)
             grad_phip_y = dde.grad.jacobian(phi_p, x, i=0, j=1)
             
-            # Strong penalty for any gradient
-            res_electron = (grad_phin_x**2 + grad_phin_y**2) * 1e3
-            res_hole = (grad_phip_x**2 + grad_phip_y**2) * 1e3
+            # CRITICAL FIX: Added (phi**2) term. This forces the value to 0, not just the slope.
+            # High weight (1e6) ensures the network prioritizes this physical fact.
+            res_electron = (grad_phin_x**2 + grad_phin_y**2 + phi_n**2) * 1e6
+            res_hole = (grad_phip_x**2 + grad_phip_y**2 + phi_p**2) * 1e6
             
             return [res_poisson, res_electron, res_hole, res_symmetry]
         
@@ -186,12 +194,12 @@ class PhotodiodePhysics:
     def get_boundary_conditions(self):
         geom = dde.geometry.Rectangle([0, 0], [DeviceGeometry.width_um, DeviceGeometry.y_total_um])
         
+        # Cathode (Top, n-type)
         def on_cathode(x, on_boundary):
             return on_boundary and np.isclose(x[1], 0) and \
                    (x[0] >= DeviceGeometry.cathode_x_range[0]) and \
                    (x[0] <= DeviceGeometry.cathode_x_range[1])
 
-        # BCs must match physical conditions
         val_psi_cat = self.psi_n_eq + self.V_bias
         val_phi_cat = self.V_bias
         
@@ -199,6 +207,7 @@ class PhotodiodePhysics:
         bc_phin_c = dde.icbc.DirichletBC(geom, lambda x: val_phi_cat, on_cathode, component=1)
         bc_phip_c = dde.icbc.DirichletBC(geom, lambda x: val_phi_cat, on_cathode, component=2)
         
+        # Anode (Bottom, p-type)
         def on_anode(x, on_boundary):
             return on_boundary and np.isclose(x[1], DeviceGeometry.y_total_um)
             
@@ -209,7 +218,7 @@ class PhotodiodePhysics:
         bc_phin_a = dde.icbc.DirichletBC(geom, lambda x: val_phi_anode, on_anode, component=1)
         bc_phip_a = dde.icbc.DirichletBC(geom, lambda x: val_phi_anode, on_anode, component=2)
         
-        # Insulation (Neumann BCs)
+        # Insulation (Neumann BCs) - Essential for 2D
         def on_insulator(x, on_boundary):
             is_left = np.isclose(x[0], 0)
             is_right = np.isclose(x[0], DeviceGeometry.width_um)
@@ -241,7 +250,6 @@ def analytical_guess(x_numpy, V_bias=0.0):
     psi_guess = (psi_n + V_bias) * (1 - sig_1) + psi_p * (sig_1 * (1 - sig_2)) + psi_pp * sig_2
     
     # Quasi-Fermi guess: Smooth transition from V_bias (cathode) to 0 (anode)
-    # If V_bias=0, this naturally gives 0 everywhere.
     phi_n_guess = V_bias * (1 - sig_1 * 0.5) 
     phi_p_guess = V_bias * (sig_2 * 0.5)
     
@@ -249,6 +257,7 @@ def analytical_guess(x_numpy, V_bias=0.0):
 
 # --- 7. MODEL FACTORY ---
 def create_model(V_bias, optical_params=None, initial_weights=None):
+    # Trigger equilibrium mode for Dark 0V only
     is_dark = (optical_params is None)
     eq_mode = (V_bias == 0.0 and is_dark)
     
@@ -256,6 +265,7 @@ def create_model(V_bias, optical_params=None, initial_weights=None):
     bcs = physics.get_boundary_conditions()
     geom = dde.geometry.Rectangle([0, 0], [DeviceGeometry.width_um, DeviceGeometry.y_total_um])
     
+    # FIX: Increased sampling density to 8000 to fix 2D plot "banding" artifacts
     def junction_sampler(n_points):
         x = np.random.uniform(0, DeviceGeometry.width_um, n_points)
         n_uni = int(0.4 * n_points)
@@ -269,7 +279,7 @@ def create_model(V_bias, optical_params=None, initial_weights=None):
         return np.column_stack((x, y)).astype(np.float32)
 
     data = dde.data.PDE(
-        geom, physics.pde, bcs, num_domain=0, num_boundary=400, anchors=junction_sampler(3000)
+        geom, physics.pde, bcs, num_domain=0, num_boundary=400, anchors=junction_sampler(8000)
     )
     
     def feature_transform(x):
@@ -308,9 +318,12 @@ def pretrain_analytical(model, V_bias, iters=5000):
     logger.info(">>> Pre-training complete.")
 
 def train_physics(model, adam_iters=10000, bfgs=True):
+    # Weights: [Poisson, Elec, Hole, Symmetry] + [BCs...]
     loss_weights = [100.0, 1.0, 1.0, 1.0] + [50.0]*9
+    
     model.compile("adam", lr=1e-3, loss_weights=loss_weights)
     model.train(iterations=adam_iters, display_every=1000)
+    
     if bfgs:
         logger.info("   >>> Refining with L-BFGS...")
         model.compile("L-BFGS", loss_weights=loss_weights)
@@ -320,18 +333,14 @@ def train_physics(model, adam_iters=10000, bfgs=True):
 def verify_solution_quality(model, V_bias, label):
     logger.info(f"--- Verifying {label} solution at {V_bias}V ---")
     
-    # Calculate target potentials
     psi_n_eq = PhysicsConstants.V_t * np.log(DeviceGeometry.N_D_cathode / PhysicsConstants.n_i)
     psi_p_eq = -PhysicsConstants.V_t * np.log(DeviceGeometry.N_A_anode / PhysicsConstants.n_i)
     
     target_psi_cat = psi_n_eq + V_bias
     target_psi_ano = psi_p_eq
-    
-    # Targets for Quasi-Fermi
     target_phi_cat = V_bias
     target_phi_ano = 0.0
     
-    # Sample points
     cat_pt = np.array([[50.0, 0.001]]).astype(np.float32)
     ano_pt = np.array([[50.0, DeviceGeometry.y_total_um - 0.001]]).astype(np.float32)
     
@@ -463,7 +472,8 @@ def run_simulation():
     Scaling.log_scales()
     
     dark_weights_db = {} 
-    voltages = [0.0, -0.5, -1.0]
+    # FIX: Changed voltages to POSITIVE to simulate REVERSE BIAS on the Cathode (N-type)
+    voltages = [0.0, 0.5, 1.0]
     
     # === STEP 1: DARK SIMULATION ===
     logger.info("=== STEP 1: DARK CURRENT SIMULATION ===")
@@ -474,12 +484,10 @@ def run_simulation():
         logger.info(f"\n--- Solving Dark Condition: V_bias = {v} V ---")
         model = create_model(v, optical_params=None, initial_weights=last_weights)
         
-        # Improved Pre-training
         if i == 0: pretrain_analytical(model, v, iters=5000)
         
         train_physics(model, adam_iters=5000 if i==0 else 8000, bfgs=True)
         
-        # Verification Step
         verify_solution_quality(model, v, "Dark")
         
         I_dark = calculate_current(model)
