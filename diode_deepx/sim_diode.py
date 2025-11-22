@@ -2,723 +2,487 @@ import deepxde as dde
 import torch
 import numpy as np
 import matplotlib.pyplot as plt
-import time
-import scipy.integrate as spi
 import os
+import copy
+import scipy.integrate as spi
+import logging
+import gc
 
-# --- 1. SETUP AND UTILITIES ---
+# --- 1. CONFIGURATION & LOGGING ---
 dde.config.set_default_float("float32")
 
-# Set backend and precision
-try:
-    dde.config.set_default_backend("pytorch")
-    print("Using: PyTorch")
-except:
-    print("Warning: Could not set backend explicitly")
+# Configure Logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
 
-# Device setup
-device = torch.device("mps") if torch.backends.mps.is_available() else \
-         torch.device("cuda") if torch.cuda.is_available() else \
-         torch.device("cpu")
-print(f"Using: {device.type.upper()}")
+# Backend Selection
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+logger.info(f"Using device: {device}")
 
+def setup_directories():
+    os.makedirs("results", exist_ok=True)
+    os.makedirs("results/plots", exist_ok=True)
 
-# --- Directory setup for plots ---
-def setup_plot_directories(steps):
-    for step in steps:
-        dir_name = f"plot_step_{step}"
-        os.makedirs(dir_name, exist_ok=True)
-        print(f"Created/Ensured directory: {dir_name}")
-
-def save_plot(fig, filename, step):
-    dir_name = f"plot_step_{step}"
-    filepath = os.path.join(dir_name, filename)
-    fig.savefig(filepath, dpi=150)
+def save_plot(fig, filename):
+    filepath = os.path.join("results/plots", filename)
+    fig.savefig(filepath, dpi=150, bbox_inches='tight')
     plt.close(fig)
-    print(f"✓ Saved plot to: {filepath}")
+    logger.info(f"Saved plot to {filepath}")
 
-
-# --- 2. PHYSICAL CONSTANTS AND GEOMETRY (MICRON SCALED) ---
-q = 1.602e-19
-k_B = 1.381e-23
-eps_0 = 8.854e-14 # F/cm
-T = 300.0
-V_t = k_B * T / q  # Thermal Voltage
-
-# SCALING FACTOR: 1 micron = 1e-4 cm
-# The NN sees inputs in microns (0 to 35), but physics is in cm.
-SCALE_L = 1e-4 
-
-eps_r = 11.7
-epsilon = eps_r * eps_0
-n_i = 1.0e10
-n_i_sq = n_i ** 2
-
-mu_n = 1400.0
-mu_p = 450.0
-
-tau_n = 1.0e-6
-tau_p = 1.0e-6
-
-# Geometry in MICRONS (Network Inputs)
-width_um = 100.0 
-n_plus_thickness_um = 1.0 
-p_thickness_um = 30.0
-p_plus_thickness_um = 5.0
-
-y_j1_um = n_plus_thickness_um
-y_j2_um = n_plus_thickness_um + p_thickness_um
-y_total_um = n_plus_thickness_um + p_thickness_um + p_plus_thickness_um
-
-# Doping Concentrations (cm^-3) - Magnitudes remain physical
-N_D_nplus = 1e18
-N_A_p = 1e15
-N_A_pplus = 1e18
-
-# Define Geometry in MICRONS
-geom = dde.geometry.Rectangle([0, 0], [width_um, y_total_um])
-
-def get_junction_distribution(n_points):
-    # Create dense grid near junctions (y_j1_um and y_j2_um)
-    x_rand = np.random.uniform(0, width_um, n_points)
+# --- 2. PHYSICAL CONSTANTS & SCALING ---
+class PhysicsConstants:
+    q = 1.602e-19       # Elementary charge (C)
+    k_B = 1.381e-23     # Boltzmann constant (J/K)
+    eps_0 = 8.854e-14   # Vacuum permittivity (F/cm)
+    T = 300.0           # Temperature (K)
+    V_t = k_B * T / q   # Thermal voltage (~0.0259 V)
     
-    # 50% of points uniform, 50% Gaussian distributed around junctions
-    y_uniform = np.random.uniform(0, y_total_um, n_points // 2)
-    y_j1_dense = np.random.normal(y_j1_um, 0.5, n_points // 4) # Sigma = 0.5um
-    y_j2_dense = np.random.normal(y_j2_um, 0.5, n_points // 4)
+    # Silicon Parameters
+    eps_r = 11.7
+    epsilon = eps_r * eps_0
+    n_i = 1.0e10        # Intrinsic carrier conc. (cm^-3)
     
-    y_combined = np.concatenate([y_uniform, y_j1_dense, y_j2_dense])
+    mu_n = 1400.0       # Electron mobility (cm^2/V.s)
+    mu_p = 450.0        # Hole mobility
     
-    # Clip to domain
-    y_combined = np.clip(y_combined, 0, y_total_um)
+    # Recombination (Shockley-Read-Hall)
+    tau_n = 1.0e-6      # Electron lifetime (s)
+    tau_p = 1.0e-6      # Hole lifetime (s)
     
-    # Shuffle
-    xy = np.vstack((x_rand, y_combined)).T
-    np.random.shuffle(xy)
-    return xy.astype(np.float32)
+    # Optical
+    R_reflectance = 0.3 # 30% reflection at Si surface
 
-
-# --- Robustness: Characteristic Scales ---
-N_max = max(N_D_nplus, N_A_pplus)
-R_thermal = n_i / min(tau_n, tau_p)
-print(f"Scales: N_max={N_max:.1e}, Domain Height={y_total_um} um")
-
-
-def doping_profile(x_in):
-    """Net doping N_D - N_A (cm^-3). Input x_in is in MICRONS."""
-    y = x_in[:, 1:2]
-    
-    # Sharpness factor relative to MICRONS. 
-    # k=20 in microns is roughly k=200,000 in cm.
-    k = 20.0  
-    
-    # Sigmoid transition functions (0 to 1)
-    sig_j1 = 0.5 * (1 + torch.tanh(k * (y - y_j1_um)))
-    sig_j2 = 0.5 * (1 + torch.tanh(k * (y - y_j2_um)))
-
-    # Construct profile regions
-    n_region = 1.0 - sig_j1
-    p_region = sig_j1 * (1.0 - sig_j2)
-    pplus_region = sig_j2
-    
-    Net_Doping = (N_D_nplus * n_region) - (N_A_p * p_region) - (N_A_pplus * pplus_region)
-
-    return Net_Doping
-
-def analytical_guess(x):
+class Scaling:
     """
-    Returns [Psi_guess, Phi_n_guess, Phi_p_guess]
-    Approximates a step junction at equilibrium (V=0).
+    Handles conversion between Neural Network inputs (Microns) 
+    and Physical equations (cm).
     """
-    y = x[:, 1:2]
+    L_scale = 1e-4  # 1 micron = 1e-4 cm
     
-    # Approximate Psi based on doping regions
-    # n+ region
-    psi_n = V_t * np.log(N_D_nplus / n_i)
-    # p region
-    psi_p = -V_t * np.log(N_A_p / n_i)
-    # p+ region
-    psi_pp = -V_t * np.log(N_A_pplus / n_i)
+    # Normalization scales for the loss function
+    N_ref = 1e18    # Reference doping (cm^-3)
     
-    # Smooth transition using tanh (similar to doping profile)
-    k = 20.0 # MATCH THE DOPING PROFILE K VALUE EXACTLY
-    sig_1 = 0.5 * (1 + np.tanh(k * (y - y_j1_um)))
-    sig_2 = 0.5 * (1 + np.tanh(k * (y - y_j2_um)))
+    # Scale factors for PDE terms to bring them to Order(1)
+    scale_poisson = (PhysicsConstants.q * N_ref) / PhysicsConstants.epsilon
+    scale_continuity = N_ref / 1.0e-6
+
+# --- 3. GEOMETRY & DOPING ---
+class DeviceGeometry:
+    width_um = 100.0
+    
+    # Layer thicknesses
+    t_n_plus = 1.0
+    t_p = 30.0
+    t_p_plus = 5.0
+    
+    y_total_um = t_n_plus + t_p + t_p_plus
+    
+    # Junction depths
+    y_j1 = t_n_plus
+    y_j2 = t_n_plus + t_p
+    
+    # Contact Locations (Microns)
+    cathode_x_range = (40.0, 60.0) # Top contact (n-type)
+    
+    # Doping Levels (cm^-3)
+    N_D_cathode = 1e18  # n+
+    N_A_bulk = 1e15     # p
+    N_A_anode = 1e18    # p+
+
+    @staticmethod
+    def doping_profile_tensor(x_um_tensor):
+        y = x_um_tensor[:, 1:2]
+        k = 20.0 # Steepness of junction
+        
+        sig_j1 = 0.5 * (1 + torch.tanh(k * (y - DeviceGeometry.y_j1)))
+        sig_j2 = 0.5 * (1 + torch.tanh(k * (y - DeviceGeometry.y_j2)))
+        
+        n_region = 1.0 - sig_j1
+        p_region = sig_j1 * (1.0 - sig_j2)
+        pplus_region = sig_j2
+        
+        net_doping = (DeviceGeometry.N_D_cathode * n_region) - \
+                     (DeviceGeometry.N_A_bulk * p_region) - \
+                     (DeviceGeometry.N_A_anode * pplus_region)
+        return net_doping
+
+# --- 4. PHYSICS ENGINE ---
+class PhotodiodePhysics:
+    def __init__(self, voltage_bias, optical_params=None):
+        self.V_bias = voltage_bias
+        self.optical = optical_params 
+        
+        # Calculate Built-in Potentials (referenced to intrinsic level psi=0)
+        self.psi_n_eq = PhysicsConstants.V_t * np.log(DeviceGeometry.N_D_cathode / PhysicsConstants.n_i)
+        self.psi_p_bulk_eq = -PhysicsConstants.V_t * np.log(DeviceGeometry.N_A_bulk / PhysicsConstants.n_i)
+        self.psi_p_anode_eq = -PhysicsConstants.V_t * np.log(DeviceGeometry.N_A_anode / PhysicsConstants.n_i)
+
+    def pde(self, x, u):
+        psi = u[:, 0:1]
+        phi_n = u[:, 1:2]
+        phi_p = u[:, 2:3]
+        
+        # 1. Carrier Statistics (Clamped for Stability)
+        limit = 30.0
+        n = PhysicsConstants.n_i * torch.exp(torch.clamp((psi - phi_n) / PhysicsConstants.V_t, -limit, limit))
+        p = PhysicsConstants.n_i * torch.exp(torch.clamp((phi_p - psi) / PhysicsConstants.V_t, -limit, limit))
+        
+        # 2. Electrostatics (Poisson)
+        N_net = DeviceGeometry.doping_profile_tensor(x)
+        rho = PhysicsConstants.q * (p - n + N_net)
+        
+        grad_psi_x = dde.grad.jacobian(psi, x, i=0, j=0)
+        grad_psi_y = dde.grad.jacobian(psi, x, i=0, j=1)
+        lap_psi_x = dde.grad.jacobian(grad_psi_x, x, i=0, j=0)
+        lap_psi_y = dde.grad.jacobian(grad_psi_y, x, i=0, j=1)
+        
+        # Laplacian in cm^-2
+        lap_psi = (lap_psi_x + lap_psi_y) * (1.0 / Scaling.L_scale)**2
+        
+        res_poisson = (PhysicsConstants.epsilon * lap_psi + rho) / Scaling.scale_poisson
+
+        # 3. Recombination (SRH)
+        n_i = PhysicsConstants.n_i
+        U_srh = (n * p - n_i**2) / (
+            PhysicsConstants.tau_p * (n + n_i) + 
+            PhysicsConstants.tau_n * (p + n_i)
+        )
+        
+        # 4. Optical Generation
+        if self.optical and self.optical['G0'] > 0:
+            y_cm = x[:, 1:2] * Scaling.L_scale
+            G_opt = self.optical['G0'] * torch.exp(-self.optical['alpha'] * y_cm)
+        else:
+            G_opt = 0.0
+            
+        R_net = U_srh - G_opt
+
+        # 5. Continuity Equations
+        inv_L = 1.0 / Scaling.L_scale
+        
+        # --- Electron Continuity ---
+        # Goal: div(Particle Flux) + R_net = 0
+        # Particle Flux Fn = n * v_n = n * (mu_n * grad_phi_n)
+        # We define Fn as POSITIVE flux direction to match div(Fn) + R_net = 0 form.
+        
+        grad_phin_x = dde.grad.jacobian(phi_n, x, i=0, j=0) * inv_L
+        grad_phin_y = dde.grad.jacobian(phi_n, x, i=0, j=1) * inv_L
+        
+        # CORRECTION: Removed negative sign to represent particle flux
+        Fn_x = PhysicsConstants.mu_n * n * grad_phin_x
+        Fn_y = PhysicsConstants.mu_n * n * grad_phin_y
+        
+        div_Fn = (dde.grad.jacobian(Fn_x, x, i=0, j=0) + dde.grad.jacobian(Fn_y, x, i=0, j=1)) * inv_L
+        
+        # CORRECTION: Sign is now (+) R_net.
+        res_electron = (div_Fn + R_net) / Scaling.scale_continuity
+
+        # --- Hole Continuity ---
+        # Goal: div(Particle Flux) + R_net = 0
+        # Particle Flux Fp = p * v_p = p * (-mu_p * grad_phi_p)
+        
+        grad_phip_x = dde.grad.jacobian(phi_p, x, i=0, j=0) * inv_L
+        grad_phip_y = dde.grad.jacobian(phi_p, x, i=0, j=1) * inv_L
+        
+        # Fp is already negative particle flux definition in standard drift-diffusion?
+        # v_p = -mu grad_phi. So Flux = -mu p grad_phi.
+        Fp_x = -PhysicsConstants.mu_p * p * grad_phip_x
+        Fp_y = -PhysicsConstants.mu_p * p * grad_phip_y
+        
+        div_Fp = (dde.grad.jacobian(Fp_x, x, i=0, j=0) + dde.grad.jacobian(Fp_y, x, i=0, j=1)) * inv_L
+        
+        res_hole = (div_Fp + R_net) / Scaling.scale_continuity
+        
+        return [res_poisson, res_electron, res_hole]
+
+    def get_boundary_conditions(self):
+        geom = dde.geometry.Rectangle([0, 0], [DeviceGeometry.width_um, DeviceGeometry.y_total_um])
+        
+        # Cathode (Top, n+)
+        def on_cathode(x, on_boundary):
+            return on_boundary and np.isclose(x[1], 0) and \
+                   (x[0] >= DeviceGeometry.cathode_x_range[0]) and \
+                   (x[0] <= DeviceGeometry.cathode_x_range[1])
+
+        val_psi_cat = self.psi_n_eq + self.V_bias
+        val_phi_cat = self.V_bias
+        
+        bc_psi_c = dde.icbc.DirichletBC(geom, lambda x: val_psi_cat, on_cathode, component=0)
+        bc_phin_c = dde.icbc.DirichletBC(geom, lambda x: val_phi_cat, on_cathode, component=1)
+        bc_phip_c = dde.icbc.DirichletBC(geom, lambda x: val_phi_cat, on_cathode, component=2)
+        
+        # Anode (Bottom, p+)
+        def on_anode(x, on_boundary):
+            return on_boundary and np.isclose(x[1], DeviceGeometry.y_total_um)
+            
+        val_psi_anode = self.psi_p_anode_eq
+        val_phi_anode = 0.0
+        
+        bc_psi_a = dde.icbc.DirichletBC(geom, lambda x: val_psi_anode, on_anode, component=0)
+        bc_phin_a = dde.icbc.DirichletBC(geom, lambda x: val_phi_anode, on_anode, component=1)
+        bc_phip_a = dde.icbc.DirichletBC(geom, lambda x: val_phi_anode, on_anode, component=2)
+        
+        return [bc_psi_c, bc_phin_c, bc_phip_c, bc_psi_a, bc_phin_a, bc_phip_a]
+
+# --- 5. ANALYTICAL GUESS (For Pre-training) ---
+def analytical_guess(x_numpy):
+    y = x_numpy[:, 1:2]
+    
+    psi_n = PhysicsConstants.V_t * np.log(DeviceGeometry.N_D_cathode / PhysicsConstants.n_i)
+    psi_p = -PhysicsConstants.V_t * np.log(DeviceGeometry.N_A_bulk / PhysicsConstants.n_i)
+    psi_pp = -PhysicsConstants.V_t * np.log(DeviceGeometry.N_A_anode / PhysicsConstants.n_i)
+    
+    k = 20.0
+    sig_1 = 0.5 * (1 + np.tanh(k * (y - DeviceGeometry.y_j1)))
+    sig_2 = 0.5 * (1 + np.tanh(k * (y - DeviceGeometry.y_j2)))
     
     psi_guess = psi_n * (1 - sig_1) + psi_p * (sig_1 * (1 - sig_2)) + psi_pp * sig_2
     
-    # At V=0 equilibrium, Phi_n and Phi_p should be 0.0 everywhere
     phi_n_guess = np.zeros_like(y)
     phi_p_guess = np.zeros_like(y)
     
     return np.hstack((psi_guess, phi_n_guess, phi_p_guess))
 
-def pretrain_analytical(model, iters=5000):
-    print(">>> Pre-training on Analytical Guess (Stabilizing Physics)...")
+# --- 6. MODEL FACTORY ---
+def create_model(V_bias, optical_params=None, initial_weights=None):
+    physics = PhotodiodePhysics(V_bias, optical_params)
+    bcs = physics.get_boundary_conditions()
+    geom = dde.geometry.Rectangle([0, 0], [DeviceGeometry.width_um, DeviceGeometry.y_total_um])
     
-    # Generate points
-    X_train = get_junction_distribution(2000)
+    def junction_sampler(n_points):
+        x = np.random.uniform(0, DeviceGeometry.width_um, n_points)
+        n_uni = int(0.4 * n_points)
+        n_j1 = int(0.3 * n_points)
+        n_j2 = n_points - n_uni - n_j1
+        
+        y_uni = np.random.uniform(0, DeviceGeometry.y_total_um, n_uni)
+        y_j1_pts = np.random.normal(DeviceGeometry.y_j1, 0.5, n_j1)
+        y_j2_pts = np.random.normal(DeviceGeometry.y_j2, 0.5, n_j2)
+        
+        y = np.concatenate([y_uni, y_j1_pts, y_j2_pts])
+        y = np.clip(y, 0, DeviceGeometry.y_total_um)
+        return np.column_stack((x, y)).astype(np.float32)
+
+    data = dde.data.PDE(
+        geom,
+        physics.pde,
+        bcs,
+        num_domain=0, 
+        num_boundary=400,
+        anchors=junction_sampler(3000)
+    )
+    
+    def feature_transform(x):
+        x_norm = torch.zeros_like(x)
+        x_norm[:, 0] = (x[:, 0] - DeviceGeometry.width_um/2) / (DeviceGeometry.width_um/2)
+        x_norm[:, 1] = (x[:, 1] - DeviceGeometry.y_total_um/2) / (DeviceGeometry.y_total_um/2)
+        return x_norm
+
+    net = dde.nn.FNN([2] + [64] * 6 + [3], "tanh", "Glorot normal")
+    net.apply_feature_transform(feature_transform)
+    
+    model = dde.Model(data, net)
+    
+    if initial_weights:
+        model.net.load_state_dict(initial_weights)
+        logger.info("Loaded weights from previous state.")
+    
+    return model
+
+# --- 7. UTILITIES: PRE-TRAINING ---
+def pretrain_analytical(model, iters=5000):
+    logger.info(">>> Pre-training on Analytical Guess...")
+    geom = model.data.geom
+    X_train = geom.random_points(2000)
     Y_train = analytical_guess(X_train)
     
-    # Define a standard MSE loss for fitting
-    def fitting_loss(y_true, y_pred):
-        return torch.mean(torch.square(y_true - y_pred))
-
-    # Standard PyTorch training loop on the model.net
-    optimizer = torch.optim.Adam(model.net.parameters(), lr=1e-3)
-    
-    model.net.train()
-    
-    # Force cast to .float() (float32) BEFORE moving to MPS device ---
-    X_tensor = torch.from_numpy(X_train).float().to(device).requires_grad_(False)
+    X_tensor = torch.from_numpy(X_train).float().to(device)
     Y_tensor = torch.from_numpy(Y_train).float().to(device)
     
-    start_t = time.time()
+    optimizer = torch.optim.Adam(model.net.parameters(), lr=1e-3)
+    model.net.train()
+    
     for i in range(iters):
         optimizer.zero_grad()
         y_pred = model.net(X_tensor)
-        loss = fitting_loss(Y_tensor, y_pred)
+        loss = torch.mean(torch.square(y_pred - Y_tensor))
         loss.backward()
         optimizer.step()
         
         if i % 1000 == 0:
-            print(f"   Step {i}: Fitting Loss {loss.item():.2e}")
+            logger.info(f"   Step {i}: Fitting Loss {loss.item():.2e}")
+    logger.info(">>> Pre-training complete.")
+
+# --- 8. POST-PROCESSING ---
+def calculate_current(model):
+    n_pts = 500
+    x_vals_um = np.linspace(0, DeviceGeometry.width_um, n_pts)
+    
+    # CORRECTION: Offset by 0.1% of device height to safely avoid BC singularities
+    eps = 0.001 * DeviceGeometry.y_total_um
+    y_vals_um = np.full_like(x_vals_um, DeviceGeometry.y_total_um - eps)
+    coords = np.column_stack((x_vals_um, y_vals_um))
+    
+    try:
+        x_tensor = torch.tensor(coords, dtype=torch.float32, device=device)
+        x_tensor.requires_grad = True
+        
+        u = model.net(x_tensor)
+        psi = u[:, 0:1]
+        phi_n = u[:, 1:2]
+        phi_p = u[:, 2:3]
+        
+        limit = 30.0
+        n = PhysicsConstants.n_i * torch.exp(torch.clamp((psi - phi_n) / PhysicsConstants.V_t, -limit, limit))
+        p = PhysicsConstants.n_i * torch.exp(torch.clamp((phi_p - psi) / PhysicsConstants.V_t, -limit, limit))
+        
+        grad_phin = torch.autograd.grad(phi_n, x_tensor, torch.ones_like(phi_n), create_graph=False)[0]
+        grad_phip = torch.autograd.grad(phi_p, x_tensor, torch.ones_like(phi_p), create_graph=False)[0]
+        
+        dphin_dy_cm = grad_phin[:, 1:2] * (1.0 / Scaling.L_scale)
+        dphip_dy_cm = grad_phip[:, 1:2] * (1.0 / Scaling.L_scale)
+        
+        Jn_y = -PhysicsConstants.q * PhysicsConstants.mu_n * n * dphin_dy_cm
+        Jp_y = -PhysicsConstants.q * PhysicsConstants.mu_p * p * dphip_dy_cm
+        J_total = Jn_y + Jp_y
+        
+        J_vals = J_total.cpu().detach().numpy().flatten()
+        
+        del x_tensor, u, n, p, grad_phin, grad_phip
+        # Cleanup CPU memory too
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
             
-    print(f"   Pre-training complete in {time.time()-start_t:.1f}s")
+        x_vals_cm = x_vals_um * Scaling.L_scale
+        current_per_cm_depth = spi.trapezoid(J_vals, x_vals_cm)
+        
+        return current_per_cm_depth
+
+    except RuntimeError as e:
+        logger.error(f"Autograd/Runtime error in current calculation: {e}")
+        return float('nan')
+    except Exception as e:
+        logger.error(f"General error in current calculation: {e}")
+        return float('nan')
+
+def plot_results(model, bias, label):
+    x = np.linspace(0, DeviceGeometry.width_um, 100)
+    y = np.linspace(0, DeviceGeometry.y_total_um, 200)
+    X, Y = np.meshgrid(x, y)
+    pts = np.vstack((X.ravel(), Y.ravel())).T
     
-# --- 3. OPTICAL GENERATION CLASS ---
-
-class OpticalGeneration:
-    def __init__(self):
-        self.G0 = 0.0
-        self.alpha = 0.0
-        self.is_dark = True
-
-    def set_dark(self):
-        self.is_dark = True
-        self.G0 = 0.0
-        self.alpha = 0.0
-
-    def set_light(self, lambda_nm, P_opt_W_cm2):
-        if lambda_nm < 700: alpha_cm = 10000.0
-        elif lambda_nm < 900: alpha_cm = 800.0
-        elif lambda_nm < 1000: alpha_cm = 100.0
-        else: alpha_cm = 10.0
-
-        R_surface = 0.3
-        h_J = 6.626e-34
-        c_m_s = 2.998e8
-        lambda_m = lambda_nm * 1e-9
-        E_photon_J = h_J * c_m_s / lambda_m
-        Phi_0 = P_opt_W_cm2 / E_photon_J
-
-        self.G0 = Phi_0 * (1.0 - R_surface) * alpha_cm
-        self.alpha = alpha_cm
-        self.is_dark = False
-
-    def get_generation_term(self, y_cm):
-        # Note: Expects y in CM for the physics calculation
-        if self.is_dark:
-            return torch.zeros_like(y_cm)
-        else:
-            return self.G0 * torch.exp(-self.alpha * y_cm)
-
-# Create global instance
-optical_gen = OpticalGeneration()
-
-
-# --- 4. QFP PDE SYSTEM (SCALED & ROBUST) ---
-
-def pde_system_robust(x, u):
-    """
-    Robust QFP System with Normalized Scaling and Clamping.
-    """
-    psi = u[:, 0:1]
-    phi_n = u[:, 1:2]
-    phi_p = u[:, 2:3]
-
-    # --- 1. SAFE CARRIER CALCULATION (Clamping) ---
-    # We clamp the exponent to range [-30, 30]
-    # exp(30) is approx 1e13. Multiplied by n_i (1e10), this allows density up to 1e23.
-    # This is plenty for our 1e18 doping, but prevents NaN/Inf.
-    limit = 30.0 
-    exp_arg_n = torch.clamp((psi - phi_n) / V_t, -limit, limit)
-    exp_arg_p = torch.clamp((phi_p - psi) / V_t, -limit, limit)
-
-    n = n_i * torch.exp(exp_arg_n)
-    p = n_i * torch.exp(exp_arg_p)
+    u = model.predict(pts)
+    psi = u[:, 0].reshape(X.shape)
     
-    # --- 2. Doping & Physics ---
-    N_net = doping_profile(x)
+    fig, ax = plt.subplots(figsize=(6, 5))
+    c = ax.contourf(X, Y, psi, levels=50, cmap='viridis')
+    plt.colorbar(c, label='Potential (V)')
+    ax.set_title(f'Potential Profile ({label}, {bias}V)')
+    ax.set_xlabel('Width (um)')
+    ax.set_ylabel('Depth (um)')
+    ax.invert_yaxis()
+    save_plot(fig, f"potential_{label}_{bias}V.png")
+
+# --- 9. MAIN SIMULATION ---
+def run_simulation():
+    setup_directories()
+    dark_weights_db = {} 
+    voltages = [0.0, -0.5, -1.0]
     
-    # Derivatives (Remember: x is in microns, derivatives need 1/SCALE_L for cm)
-    dpsi_x = dde.grad.jacobian(psi, x, i=0, j=0)
-    dpsi_y = dde.grad.jacobian(psi, x, i=0, j=1)
-    d2psi_x2 = dde.grad.jacobian(dpsi_x, x, i=0, j=0)
-    d2psi_y2 = dde.grad.jacobian(dpsi_y, x, i=0, j=1)
+    logger.info("=== STEP 1: DARK CURRENT SIMULATION ===")
+    dark_currents = []
+    last_weights = None
     
-    # Laplacian in cm^-2
-    laplacian_psi_cm = (d2psi_x2 + d2psi_y2) * (1.0 / SCALE_L)**2
-    
-    # Charge Density
-    rho = q * (p - n + N_net)
-
-    # --- 3. SCALING FACTORS ---
-    # Poisson Scale: q * N_max
-    # Continuity Scale: N_max / tau (Order of magnitude of recombination)
-    scale_poisson = q * N_max 
-    scale_continuity = N_max / min(tau_n, tau_p)
-
-    # --- 4. Poisson Equation ---
-    eq1_poisson = (epsilon * laplacian_psi_cm + rho) / scale_poisson
-
-    # --- 5. Recombination & Generation ---
-    U_num = n * p - n_i_sq
-    U_den = tau_p * (n + n_i) + tau_n * (p + n_i)
-    U = U_num / U_den
-
-    # Optical Generation
-    y_cm = x[:, 1:2] * SCALE_L
-    G = optical_gen.get_generation_term(y_cm)
-    
-    # Net Rate
-    R_net = U - G
-
-    # --- 6. Electron Continuity ---
-    # J_n = -q * mu_n * n * grad(phi_n)
-    # div(J_n) = -q * R_net  =>  div(mu*n*grad(phi)) = R_net
-    
-    dphin_x = dde.grad.jacobian(phi_n, x, i=0, j=0) * (1.0 / SCALE_L)
-    dphin_y = dde.grad.jacobian(phi_n, x, i=0, j=1) * (1.0 / SCALE_L)
-
-    # Flux F = mu * n * grad(phi) (This is J/q)
-    Fn_x = -mu_n * n * dphin_x
-    Fn_y = -mu_n * n * dphin_y
-    
-    div_Fn = (dde.grad.jacobian(Fn_x, x, i=0, j=0) + \
-              dde.grad.jacobian(Fn_y, x, i=0, j=1)) * (1.0 / SCALE_L)
-
-    eq2_electron = (div_Fn + R_net) / scale_continuity
-
-    # --- 7. Hole Continuity ---
-    dphip_x = dde.grad.jacobian(phi_p, x, i=0, j=0) * (1.0 / SCALE_L)
-    dphip_y = dde.grad.jacobian(phi_p, x, i=0, j=1) * (1.0 / SCALE_L)
-
-    Fp_x = -mu_p * p * dphip_x
-    Fp_y = -mu_p * p * dphip_y
-    
-    div_Fp = (dde.grad.jacobian(Fp_x, x, i=0, j=0) + \
-              dde.grad.jacobian(Fp_y, x, i=0, j=1)) * (1.0 / SCALE_L)
-
-    eq3_hole = (div_Fp + R_net) / scale_continuity
-
-    return [eq1_poisson, eq2_electron, eq3_hole]
-
-
-# --- 5. BOUNDARY CONDITIONS (MICRON DOMAIN) ---
-
-cathode_x_start = 40.0 # um
-cathode_x_end = 60.0   # um
-
-# Built-in potentials
-V_bi_cathode = V_t * np.log(N_D_nplus / n_i)
-V_bi_anode = -V_t * np.log(N_A_pplus / n_i)
-
-def on_cathode(x, on_boundary):
-    is_on_y = np.isclose(x[1], 0, atol=1e-3)
-    is_on_x = (x[0] >= cathode_x_start) & (x[0] <= cathode_x_end)
-    return on_boundary and is_on_y and is_on_x
-
-def on_anode(x, on_boundary):
-    # At y = y_total_um
-    return on_boundary and np.isclose(x[1], y_total_um, atol=1e-3)
-
-def get_bcs_robust(V_bias=0.0):
-    # Cathode (Top, n+)
-    psi_cathode_val = V_bi_cathode + V_bias
-    phin_cathode_val = V_bias 
-    phip_cathode_val = V_bias 
-
-    bc_psi_cathode = dde.icbc.DirichletBC(geom, lambda x: psi_cathode_val, on_cathode, component=0)
-    bc_phin_cathode = dde.icbc.DirichletBC(geom, lambda x: phin_cathode_val, on_cathode, component=1)
-    bc_phip_cathode = dde.icbc.DirichletBC(geom, lambda x: phip_cathode_val, on_cathode, component=2)
-
-    # Anode (Bottom, p+, GND)
-    psi_anode_val = V_bi_anode
-    phin_anode_val = 0.0 
-    phip_anode_val = 0.0 
-
-    bc_psi_anode = dde.icbc.DirichletBC(geom, lambda x: psi_anode_val, on_anode, component=0)
-    bc_phin_anode = dde.icbc.DirichletBC(geom, lambda x: phin_anode_val, on_anode, component=1)
-    bc_phip_anode = dde.icbc.DirichletBC(geom, lambda x: phip_anode_val, on_anode, component=2)
-
-    return [bc_psi_cathode, bc_phin_cathode, bc_phip_cathode,
-            bc_psi_anode, bc_phin_anode, bc_phip_anode]
-
-
-# --- 6. CURRENT CALCULATION (SCALED) ---
-
-def J_y_total_robust(x, u):
-    """Calculates Total Current Density J_y in A/cm^2"""
-    psi = u[:, 0:1]
-    phi_n = u[:, 1:2]
-    phi_p = u[:, 2:3]
-
-    limit = 30.0 
-    exp_arg_n = torch.clamp((psi - phi_n) / V_t, -limit, limit)
-    exp_arg_p = torch.clamp((phi_p - psi) / V_t, -limit, limit)
-
-
-    n = n_i * torch.exp(exp_arg_n)
-    p = n_i * torch.exp(exp_arg_p)
-
-    # dPhi/dy_um
-    dphin_y_um = dde.grad.jacobian(phi_n, x, i=0, j=1)
-    dphip_y_um = dde.grad.jacobian(phi_p, x, i=0, j=1)
-    
-    # Convert to dPhi/dy_cm
-    dphin_y_cm = dphin_y_um * (1.0 / SCALE_L)
-    dphip_y_cm = dphip_y_um * (1.0 / SCALE_L)
-
-    # Total Current Density (A/cm^2)
-    Jn_y = -q * mu_n * n * dphin_y_cm
-    Jp_y = -q * mu_p * p * dphip_y_cm
-
-    return Jn_y + Jp_y
-
-def calculate_current(model, n_points_x=150):
-    # Integrate across the Anode (Width in um)
-    x_contact_um = np.linspace(0, width_um, n_points_x)
-    y_contact_um = np.full_like(x_contact_um, y_total_um)
-    contact_points = np.vstack((x_contact_um, y_contact_um)).T
-
-    J_y_values = model.predict(contact_points, operator=J_y_total_robust)
-    J_y_values = J_y_values.flatten()
-
-    # Integration: I = Integral(J * dx)
-    # dx must be in cm to result in Amps/cm
-    x_contact_cm = x_contact_um * SCALE_L
-    
-    current_per_cm = -spi.trapezoid(J_y_values, x_contact_cm)
-    return current_per_cm
-
-
-# --- 7. NETWORK AND SOLVER (POTENT NETWORK) ---
-
-def feature_transform(x):
-    # Normalize inputs to range [-1, 1] approx
-    x_norm = x.clone()
-    x_norm[:, 0] = (x[:, 0] - width_um/2) / (width_um/2)
-    x_norm[:, 1] = (x[:, 1] - y_total_um/2) / (y_total_um/2)
-    return x_norm
-
-# INCREASED CAPACITY: 6 layers of 128 neurons
-# This helps capture the sharp depletion region curvature.
-layer_sizes = [2] + [128] * 6 + [3] 
-net = dde.nn.FNN(layer_sizes, "tanh", "Glorot normal")
-net.apply_feature_transform(feature_transform)
-
-def solve_photodiode_robust(V_bias, iters_stage1, iters_stage2, iters_stage3, initial_weights=None):
-    
-    gen_status = "DARK" if optical_gen.is_dark else "LIGHT"
-    print("-" * 60)
-    print(f"Solving for V_bias = {V_bias:.3f} V, {gen_status}")
-
-    # 1. Get Boundary Conditions
-    bcs = get_bcs_robust(V_bias)
-    
-    # 2. SMART SAMPLING (The fix for flat profiles)
-    # We generate 2000 points, heavily focused on the junctions
-    anchors = get_junction_distribution(2000)
-    
-    data = dde.data.PDE(
-        geom,
-        pde_system_robust,
-        bcs,
-        num_domain=0,      # We set this to 0 because we provide anchors
-        num_boundary=400,
-        anchors=anchors    # Explicitly use our smart distribution
-    )
-
-    model = dde.Model(data, net)
-
-    # 3. INITIALIZATION / PRE-TRAINING (The fix for 10^18 current)
-    if initial_weights:
-        model.net.load_state_dict(initial_weights)
-        print(">>> Loaded weights from previous step.")
-    else:
-        # If no weights provided, this is the first run (V=0, Dark).
-        # We MUST pre-train on the analytical guess.
-        pretrain_analytical(model, iters=5000)
-
-    # 4. LOSS WEIGHTS
-    # We give high weight to Continuity and very high weight to BCs
-    # [Poisson, Electron, Hole, BCs...]
-    loss_weights = [1.0, 20.0, 20.0] + [100.0] * len(bcs)
-
-    # STAGE 1: Standard Training
-    if iters_stage1 > 0:
-        print("Stage 1: Training PDE...")
+    for i, v in enumerate(voltages):
+        logger.info(f"\n--- Solving Dark Condition: V_bias = {v} V ---")
+        
+        model = create_model(v, optical_params=None, initial_weights=last_weights)
+        
+        if i == 0:
+            pretrain_analytical(model, iters=5000)
+        
+        # Weights: [Poisson, Elec, Hole, BCs...]
+        loss_weights = [1.0, 1.0, 1.0] + [50.0]*6 
+        
+        model.compile("adam", lr=1e-3, loss_weights=loss_weights)
+        model.train(iterations=10000, display_every=1000)
+        
+        # Increase fine-tuning iterations for non-zero bias
+        fine_tune_iters = 5000 if v == 0.0 else 8000
         model.compile("adam", lr=1e-4, loss_weights=loss_weights)
-        model.train(iterations=iters_stage1, display_every=1000)
+        model.train(iterations=fine_tune_iters, display_every=1000)
+        
+        I_dark = calculate_current(model)
+        dark_currents.append(I_dark)
+        logger.info(f"  >>> Dark Current: {I_dark:.4e} A/cm")
+        
+        plot_results(model, v, "Dark")
+        
+        current_weights = copy.deepcopy(model.net.state_dict())
+        dark_weights_db[v] = current_weights
+        last_weights = current_weights
 
-    # STAGE 2: Refinement (Optional lower LR)
-    if iters_stage2 > 0:
-        print("Stage 2: Fine Tuning...")
-        model.compile("adam", lr=2e-5, loss_weights=loss_weights)
-        model.train(iterations=iters_stage2, display_every=1000)
-
-    # Return model and weights for the next voltage step
-    import copy
-    return model, copy.deepcopy(model.net.state_dict())
-
-
-# --- 8. VISUALIZATION FUNCTIONS (Using Microns) ---
-
-def plot_1d_profiles(model, V_bias, is_dark, step_name):
-    n_points = 500
-    y_plot_um = np.linspace(0, y_total_um, n_points)
-    x_plot_um = np.full_like(y_plot_um, width_um / 2.0)
-    plot_domain = np.vstack((x_plot_um, y_plot_um)).T
-
-    u_pred = model.predict(plot_domain)
-    psi_pred = u_pred[:, 0]
-    phi_n_pred = u_pred[:, 1]
-    phi_p_pred = u_pred[:, 2]
+    logger.info("=== STEP 2: ILLUMINATED SIMULATION & EQE ===")
     
-    n_pred = n_i * np.exp(np.clip((psi_pred - phi_n_pred)/V_t, -60, 60))
-    p_pred = n_i * np.exp(np.clip((phi_p_pred - psi_pred)/V_t, -60, 60))
+    wavelength_nm = 850
+    # Validation
+    assert 300 < wavelength_nm < 1200, "Wavelength outside Si bandgap range"
     
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 6))
-    title_suffix = "DARK" if is_dark else "ILLUMINATED"
-    fig.suptitle(f'1D Center (V={V_bias:.3f}V, {title_suffix})', fontsize=14)
-
-    # Potential
-    ax1.plot(y_plot_um, psi_pred, 'k-', lw=2, label='Psi')
-    ax1.plot(y_plot_um, phi_n_pred, 'b--', label='Phi_n')
-    ax1.plot(y_plot_um, phi_p_pred, 'r--', label='Phi_p')
-    ax1.axvline(y_j1_um, color='gray', linestyle=':')
-    ax1.axvline(y_j2_um, color='gray', linestyle=':')
-    ax1.set_xlabel('Depth (µm)')
-    ax1.set_ylabel('Potential (V)')
-    ax1.legend()
-    ax1.grid(True, alpha=0.3)
-
-    # Carriers
-    ax2.semilogy(y_plot_um, n_pred, 'b-', lw=2, label='n')
-    ax2.semilogy(y_plot_um, p_pred, 'r-', lw=2, label='p')
-    ax2.semilogy(y_plot_um, np.full_like(y_plot_um, n_i), 'k:', label='ni')
-    ax2.set_xlabel('Depth (µm)')
-    ax2.set_ylabel('Concentration (cm⁻³)')
-    ax2.legend()
-    ax2.grid(True, alpha=0.3)
+    P_opt_W_cm2 = 0.1 
+    assert P_opt_W_cm2 > 0, "Optical power must be positive"
     
-    save_plot(fig, f"1D_Profiles_{title_suffix}_V{V_bias:.2f}.png", step_name)
+    E_ph = (6.626e-34 * 3e8) / (wavelength_nm * 1e-9)
+    Phi_0 = P_opt_W_cm2 / E_ph 
+    
+    alpha = 600.0 # cm^-1
+    # Include surface reflection
+    G0_eff = Phi_0 * (1 - PhysicsConstants.R_reflectance) * alpha
+    
+    optical_params = {
+        'G0': G0_eff,
+        'alpha': alpha
+    }
+    
+    photo_currents = []
+    eqes = []
+    
+    for i, v in enumerate(voltages):
+        logger.info(f"\n--- Solving Light Condition: V_bias = {v} V ---")
+        
+        start_weights = dark_weights_db[v]
+        model = create_model(v, optical_params=optical_params, initial_weights=start_weights)
+        
+        loss_weights = [1.0, 1.0, 1.0] + [50.0]*6 
+        model.compile("adam", lr=1e-4, loss_weights=loss_weights)
+        
+        # CORRECTION: More iterations for light case to handle generation term shock
+        model.train(iterations=10000, display_every=1000)
+        
+        I_light = calculate_current(model)
+        I_photo = abs(I_light - dark_currents[i])
+        photo_currents.append(I_photo)
+        
+        device_width_cm = DeviceGeometry.width_um * Scaling.L_scale
+        photons_in_per_sec = Phi_0 * device_width_cm
+        electrons_out_per_sec = I_photo / PhysicsConstants.q
+        
+        eqe = (electrons_out_per_sec / photons_in_per_sec) * 100
+        eqes.append(eqe)
+        
+        logger.info(f"  >>> I_light: {I_light:.4e} | I_photo: {I_photo:.4e}")
+        logger.info(f"  >>> EQE: {eqe:.2f}%")
+        
+        plot_results(model, v, "Light")
 
-def plot_iv_curve(V_dark, I_dark, V_light, I_light, step_name):
-    fig = plt.figure(figsize=(10, 7))
-    plt.plot(V_dark, np.array(I_dark) * 1e3, 'bo-', label='Dark')
-    if len(V_light) > 0:
-        plt.plot(V_light, np.array(I_light) * 1e3, 'ro-', label='Light')
-    plt.xlabel('Voltage (V)')
-    plt.ylabel('Current (mA/cm)')
-    plt.title('I-V Characteristic')
+    plt.figure()
+    plt.plot(voltages, eqes, 'o-')
+    plt.xlabel("Reverse Bias (V)")
+    plt.ylabel("EQE (%)")
+    plt.title(f"Quantum Efficiency at {wavelength_nm}nm")
     plt.grid(True)
-    plt.legend()
-    save_plot(fig, "IV_Characteristic.png", step_name)
-
-def plot_qe_curve(wavelengths, EQE_values, step_name):
-    fig = plt.figure(figsize=(10, 7))
-    plt.plot(wavelengths, EQE_values, 'go-', linewidth=2, markersize=8)
-    plt.xlabel('Wavelength (nm)', fontsize=14)
-    plt.ylabel('EQE (%)', fontsize=14)
-    plt.title('Photodiode Spectral Response (Robust QFP)', fontsize=16)
-    plt.grid(True, alpha=0.3)
-    plt.ylim(0, 100)
-    save_plot(fig, "EQE_Spectral_Response.png", step_name)
-
-def plot_2d_contour(model, V_bias, is_dark, variable_name, component_index, step_name):
-    grid_size = 50
-    x_c = np.linspace(0, width_um, grid_size)
-    y_c = np.linspace(0, y_total_um, grid_size)
-    X, Y = np.meshgrid(x_c, y_c)
-    plot_points = np.vstack((X.flatten(), Y.flatten())).T
-
-    u_pred = model.predict(plot_points)
-    Z_data = u_pred[:, component_index].reshape(grid_size, grid_size)
-
-    if variable_name in ['n', 'p']:
-        psi_t = torch.tensor(u_pred[:, 0], dtype=torch.float32)
-        phin_t = torch.tensor(u_pred[:, 1], dtype=torch.float32)
-        phip_t = torch.tensor(u_pred[:, 2], dtype=torch.float32)
-        
-        n_i_t = torch.tensor(n_i, dtype=torch.float32)
-        V_t_t = torch.tensor(V_t, dtype=torch.float32)
-
-        exp_arg_n = torch.clamp((psi_t - phin_t) / V_t_t, -80, 80)
-        exp_arg_p = torch.clamp((phip_t - psi_t) / V_t_t, -80, 80)
-        
-        n_raw = n_i_t * torch.exp(exp_arg_n)
-        p_raw = n_i_t * torch.exp(exp_arg_p)
-
-        if variable_name == 'n':
-            Z_data = np.log10(np.clip(n_raw.cpu().detach().numpy(), 1e5, N_max * 2)).reshape(grid_size, grid_size)
-            label = "log10(n) (cm⁻³)"
-        else: 
-            Z_data = np.log10(np.clip(p_raw.cpu().detach().numpy(), 1e5, N_max * 2)).reshape(grid_size, grid_size)
-            label = "log10(p) (cm⁻³)"
-    else: 
-        label = f"{variable_name} (V)"
-
-    fig, ax = plt.subplots(figsize=(8, 6))
-    contour = ax.pcolormesh(X, Y, Z_data, shading='gouraud', cmap='viridis')
-    cbar = fig.colorbar(contour, ax=ax, label=label)
-    
-    ax.axhline(y_j1_um, color='k', linestyle=':', linewidth=1)
-    ax.axhline(y_j2_um, color='k', linestyle=':', linewidth=1)
-    
-    ax.set_title(f'2D Contour: {variable_name} (V={V_bias:.3f}V, {"DARK" if is_dark else "LIGHT"})')
-    ax.set_xlabel('Width (µm)')
-    ax.set_ylabel('Depth (µm)')
-    ax.set_aspect('equal', adjustable='box')
-    
-    save_plot(fig, f"2D_Contour_{variable_name}_V_{V_bias:.3f}_{'DARK' if is_dark else 'LIGHT'}.png", step_name)
-
-
-# --- 9. MAIN EXECUTION ---
+    save_plot(plt.gcf(), "EQE_Curve.png")
+    logger.info("Simulation Complete.")
 
 if __name__ == "__main__":
-
-    global weights_dark_0V
-
-    # Define the execution steps for organized plotting
-    EXECUTION_STEPS = ["a_pretrain_v0_dark", "b_iv_sweep", "c_qe_sweep"]
-    setup_plot_directories(EXECUTION_STEPS)
-
-    # Simulation parameters
-    V_sweep_iv = np.array([-0.5,-0.3, 0.0, 0.3, 0.5]) 
-    wavelengths_qe = np.array([400, 700, 950, 1050]) 
-    P_opt_qe = 0.001 
-
-    # Training iterations (Enough for Potent Network)
-    iters_s1_first = 15000
-    iters_s2_first = 10000
-    iters_s3_first = 5000
-    iters_s1_transfer = 5000
-    iters_s2_transfer = 3000
-    iters_s3_transfer = 2000
-
-    currents_dark_vals = []
-    V_sweep_dark = []
-    
-    # === STEP 1: PRE-TRAINING (V=0.0 DARK) ===
-    print("\n" + "=" * 70)
-    print("STEP 1: PRE-TRAINING (Solving V=0.0 DARK for stable initial guess)")
-    print("=" * 70)
-    
-    optical_gen.set_dark()
-    
-    model_dark_0V, weights_dark_0V = solve_photodiode_robust(
-        0.0, iters_s1_first, iters_s2_first, iters_s3_first, initial_weights=None
-    )
-    I_dark_0V_calc = calculate_current(model_dark_0V)
-    print(f"  >>> I_dark(0.000V) = {I_dark_0V_calc:.3e} A/cm")
-
-    V_sweep_dark.append(0.0)
-    currents_dark_vals.append(I_dark_0V_calc)
-    
-    plot_1d_profiles(model_dark_0V, 0.0, True, EXECUTION_STEPS[0])
-    plot_2d_contour(model_dark_0V, 0.0, True, 'psi', 0, EXECUTION_STEPS[0])
-    plot_2d_contour(model_dark_0V, 0.0, True, 'n', 1, EXECUTION_STEPS[0])
-
-    # === STEP 2: DARK & LIGHT I-V SWEEP ===
-    currents_light_vals = []
-    V_sweep_light = []
-    
-    print("\n" + "=" * 70)
-    print("STEP 2.1: ROBUST DARK I-V SWEEP")
-    print("=" * 70)
-
-    for V in V_sweep_iv:
-        if V == 0.0: continue
-        
-        V_sweep_dark.append(V)
-        model, _ = solve_photodiode_robust(
-            V, iters_s1_transfer, iters_s2_transfer, iters_s3_transfer,
-            initial_weights=weights_dark_0V
-        )
-        current = calculate_current(model)
-        print(f"  >>> I_dark({V:.3f}V) = {current:.3e} A/cm")
-        currents_dark_vals.append(current)
-        
-        if V == -0.5:
-            plot_1d_profiles(model, V, True, EXECUTION_STEPS[1])
-
-    dark_results = sorted(zip(V_sweep_dark, currents_dark_vals))
-    V_sweep_dark_sorted = [v for v, i in dark_results]
-    currents_dark_sorted = [i for v, i in dark_results]
-
-    print("\n" + "=" * 70)
-    print("STEP 2.2: ROBUST LIGHT I-V SWEEP (850nm)")
-    print("=" * 70)
-
-    optical_gen.set_light(850, P_opt_W_cm2=P_opt_qe)
-
-    for V in V_sweep_iv:
-        V_sweep_light.append(V)
-        model, _ = solve_photodiode_robust(
-            V, iters_s1_transfer, iters_s2_transfer, iters_s3_transfer,
-            initial_weights=weights_dark_0V
-        )
-        current = calculate_current(model)
-        print(f"  >>> I_light({V:.3f}V) = {current:.3e} A/cm")
-        currents_light_vals.append(current)
-
-        if V == 0.0:
-            plot_1d_profiles(model, V, False, EXECUTION_STEPS[1])
-            
-    light_results = sorted(zip(V_sweep_light, currents_light_vals))
-    V_sweep_light_sorted = [v for v, i in light_results]
-    currents_light_sorted = [i for v, i in light_results]
-    
-    plot_iv_curve(V_sweep_dark_sorted, currents_dark_sorted, 
-                  V_sweep_light_sorted, currents_light_sorted, 
-                  EXECUTION_STEPS[1])
-
-    # === STEP 3: QUANTUM EFFICIENCY ===
-    print("\n" + "=" * 70)
-    print("STEP 3: QUANTUM EFFICIENCY SWEEP")
-    print("=" * 70)
-
-    photocurrents = []
-    EQE_values = []
-    h_J = 6.626e-34
-    c_m_s = 2.998e8
-    width_cm = width_um * 1e-4
-
-    for lam_nm in wavelengths_qe:
-        optical_gen.set_light(lam_nm, P_opt_W_cm2=P_opt_qe)
-
-        model_light, _ = solve_photodiode_robust(
-            0.0, iters_s1_transfer, iters_s2_transfer, iters_s3_transfer,
-            initial_weights=weights_dark_0V
-        )
-
-        I_light = calculate_current(model_light)
-        I_photo = I_light - I_dark_0V_calc
-        photocurrents.append(I_photo)
-
-        lambda_m = lam_nm * 1e-9
-        E_photon_J = h_J * c_m_s / lambda_m
-        Phi_0 = P_opt_qe / E_photon_J 
-        
-        photons_in_per_cm = Phi_0 * width_cm 
-        electrons_out_per_cm = abs(I_photo) / q
-
-        EQE = (electrons_out_per_cm / photons_in_per_cm) if photons_in_per_cm > 0 else 0
-        EQE_values.append(EQE * 100)
-
-        print(f"  >>> λ={lam_nm}nm: I_photo={I_photo:.3e} A/cm, EQE={EQE * 100:.1f}%")
-
-    plot_qe_curve(wavelengths_qe, EQE_values, EXECUTION_STEPS[2])
-    print("\n✅ Simulation Complete.")
+    run_simulation()
