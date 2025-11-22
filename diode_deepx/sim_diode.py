@@ -78,6 +78,26 @@ N_A_pplus = 1e18
 # Define Geometry in MICRONS
 geom = dde.geometry.Rectangle([0, 0], [width_um, y_total_um])
 
+def get_junction_distribution(n_points):
+    # Create dense grid near junctions (y_j1_um and y_j2_um)
+    x_rand = np.random.uniform(0, width_um, n_points)
+    
+    # 50% of points uniform, 50% Gaussian distributed around junctions
+    y_uniform = np.random.uniform(0, y_total_um, n_points // 2)
+    y_j1_dense = np.random.normal(y_j1_um, 0.5, n_points // 4) # Sigma = 0.5um
+    y_j2_dense = np.random.normal(y_j2_um, 0.5, n_points // 4)
+    
+    y_combined = np.concatenate([y_uniform, y_j1_dense, y_j2_dense])
+    
+    # Clip to domain
+    y_combined = np.clip(y_combined, 0, y_total_um)
+    
+    # Shuffle
+    xy = np.vstack((x_rand, y_combined)).T
+    np.random.shuffle(xy)
+    return xy.astype(np.float32)
+
+
 # --- Robustness: Characteristic Scales ---
 N_max = max(N_D_nplus, N_A_pplus)
 R_thermal = n_i / min(tau_n, tau_p)
@@ -105,7 +125,67 @@ def doping_profile(x_in):
 
     return Net_Doping
 
+def analytical_guess(x):
+    """
+    Returns [Psi_guess, Phi_n_guess, Phi_p_guess]
+    Approximates a step junction at equilibrium (V=0).
+    """
+    y = x[:, 1:2]
+    
+    # Approximate Psi based on doping regions
+    # n+ region
+    psi_n = V_t * np.log(N_D_nplus / n_i)
+    # p region
+    psi_p = -V_t * np.log(N_A_p / n_i)
+    # p+ region
+    psi_pp = -V_t * np.log(N_A_pplus / n_i)
+    
+    # Smooth transition using tanh (similar to doping profile)
+    k = 20.0 # MATCH THE DOPING PROFILE K VALUE EXACTLY
+    sig_1 = 0.5 * (1 + np.tanh(k * (y - y_j1_um)))
+    sig_2 = 0.5 * (1 + np.tanh(k * (y - y_j2_um)))
+    
+    psi_guess = psi_n * (1 - sig_1) + psi_p * (sig_1 * (1 - sig_2)) + psi_pp * sig_2
+    
+    # At V=0 equilibrium, Phi_n and Phi_p should be 0.0 everywhere
+    phi_n_guess = np.zeros_like(y)
+    phi_p_guess = np.zeros_like(y)
+    
+    return np.hstack((psi_guess, phi_n_guess, phi_p_guess))
 
+def pretrain_analytical(model, iters=5000):
+    print(">>> Pre-training on Analytical Guess (Stabilizing Physics)...")
+    
+    # Generate points
+    X_train = get_junction_distribution(2000)
+    Y_train = analytical_guess(X_train)
+    
+    # Define a standard MSE loss for fitting
+    def fitting_loss(y_true, y_pred):
+        return torch.mean(torch.square(y_true - y_pred))
+
+    # Standard PyTorch training loop on the model.net
+    optimizer = torch.optim.Adam(model.net.parameters(), lr=1e-3)
+    
+    model.net.train()
+    
+    # Force cast to .float() (float32) BEFORE moving to MPS device ---
+    X_tensor = torch.from_numpy(X_train).float().to(device).requires_grad_(False)
+    Y_tensor = torch.from_numpy(Y_train).float().to(device)
+    
+    start_t = time.time()
+    for i in range(iters):
+        optimizer.zero_grad()
+        y_pred = model.net(X_tensor)
+        loss = fitting_loss(Y_tensor, y_pred)
+        loss.backward()
+        optimizer.step()
+        
+        if i % 1000 == 0:
+            print(f"   Step {i}: Fitting Loss {loss.item():.2e}")
+            
+    print(f"   Pre-training complete in {time.time()-start_t:.1f}s")
+    
 # --- 3. OPTICAL GENERATION CLASS ---
 
 class OpticalGeneration:
@@ -151,30 +231,27 @@ optical_gen = OpticalGeneration()
 
 def pde_system_robust(x, u):
     """
-    Robust system with Anti-Explosion Clamping.
+    Robust QFP System with Normalized Scaling and Clamping.
     """
     psi = u[:, 0:1]
     phi_n = u[:, 1:2]
     phi_p = u[:, 2:3]
 
-    # --- 1. SAFE CARRIER CALCULATION ---
-    # Physics Limit: Max doping is ~1e18. 
-    # ln(1e18 / 1e10) = ln(1e8) ~= 18.4
-    # We clamp the exponent to 23.0 (approx 1e10 margin) to prevent NaN/Inf 
-    # but allow enough range for accumulation layers.
-    
-    limit = 23.0 
+    # --- 1. SAFE CARRIER CALCULATION (Clamping) ---
+    # We clamp the exponent to range [-30, 30]
+    # exp(30) is approx 1e13. Multiplied by n_i (1e10), this allows density up to 1e23.
+    # This is plenty for our 1e18 doping, but prevents NaN/Inf.
+    limit = 30.0 
     exp_arg_n = torch.clamp((psi - phi_n) / V_t, -limit, limit)
     exp_arg_p = torch.clamp((phi_p - psi) / V_t, -limit, limit)
 
     n = n_i * torch.exp(exp_arg_n)
     p = n_i * torch.exp(exp_arg_p)
     
-    # --- 2. Doping ---
+    # --- 2. Doping & Physics ---
     N_net = doping_profile(x)
     
-    # --- 3. Poisson's Equation ---
-    # Network outputs derivatives in [V / um] and [V / um^2]
+    # Derivatives (Remember: x is in microns, derivatives need 1/SCALE_L for cm)
     dpsi_x = dde.grad.jacobian(psi, x, i=0, j=0)
     dpsi_y = dde.grad.jacobian(psi, x, i=0, j=1)
     d2psi_x2 = dde.grad.jacobian(dpsi_x, x, i=0, j=0)
@@ -183,15 +260,19 @@ def pde_system_robust(x, u):
     # Laplacian in cm^-2
     laplacian_psi_cm = (d2psi_x2 + d2psi_y2) * (1.0 / SCALE_L)**2
     
+    # Charge Density
     rho = q * (p - n + N_net)
 
-    # SCALING POISSON: 
-    # Normalize by the maximum charge density q*N_max
+    # --- 3. SCALING FACTORS ---
+    # Poisson Scale: q * N_max
+    # Continuity Scale: N_max / tau (Order of magnitude of recombination)
     scale_poisson = q * N_max 
+    scale_continuity = N_max / min(tau_n, tau_p)
+
+    # --- 4. Poisson Equation ---
     eq1_poisson = (epsilon * laplacian_psi_cm + rho) / scale_poisson
 
-    # --- 4. Recombination & Generation ---
-    # Shockley-Read-Hall
+    # --- 5. Recombination & Generation ---
     U_num = n * p - n_i_sq
     U_den = tau_p * (n + n_i) + tau_n * (p + n_i)
     U = U_num / U_den
@@ -199,29 +280,25 @@ def pde_system_robust(x, u):
     # Optical Generation
     y_cm = x[:, 1:2] * SCALE_L
     G = optical_gen.get_generation_term(y_cm)
-
-    # --- 5. Drift-Diffusion Scaling ---
-    # The current J is huge (A/cm^2). We must normalize the CONTINUITY equation 
-    # so it produces residuals close to 1.0, not 1e20.
     
-    # Reference Current J_ref = q * D * N / L
-    # Or simpler: Normalize by the "Diffusion Rate" term: N_max / tau
-    scale_continuity = N_max / min(tau_n, tau_p)
+    # Net Rate
+    R_net = U - G
 
     # --- 6. Electron Continuity ---
+    # J_n = -q * mu_n * n * grad(phi_n)
+    # div(J_n) = -q * R_net  =>  div(mu*n*grad(phi)) = R_net
+    
     dphin_x = dde.grad.jacobian(phi_n, x, i=0, j=0) * (1.0 / SCALE_L)
     dphin_y = dde.grad.jacobian(phi_n, x, i=0, j=1) * (1.0 / SCALE_L)
 
-    # Fn flux (cm^-2 s^-1) = J/q
-    # We calculate flux directly to keep numbers slightly smaller than J
+    # Flux F = mu * n * grad(phi) (This is J/q)
     Fn_x = -mu_n * n * dphin_x
     Fn_y = -mu_n * n * dphin_y
     
-    # Divergence of Flux
     div_Fn = (dde.grad.jacobian(Fn_x, x, i=0, j=0) + \
               dde.grad.jacobian(Fn_y, x, i=0, j=1)) * (1.0 / SCALE_L)
 
-    eq2_electron = (div_Fn - G + U) / scale_continuity
+    eq2_electron = (div_Fn + R_net) / scale_continuity
 
     # --- 7. Hole Continuity ---
     dphip_x = dde.grad.jacobian(phi_p, x, i=0, j=0) * (1.0 / SCALE_L)
@@ -233,10 +310,8 @@ def pde_system_robust(x, u):
     div_Fp = (dde.grad.jacobian(Fp_x, x, i=0, j=0) + \
               dde.grad.jacobian(Fp_y, x, i=0, j=1)) * (1.0 / SCALE_L)
 
-    eq3_hole = (div_Fp - G + U) / scale_continuity
+    eq3_hole = (div_Fp + R_net) / scale_continuity
 
-    # Logarithmic Loss dampening (Optional but helpful if loss is still high)
-    # But usually, the clamp above fixes the root cause.
     return [eq1_poisson, eq2_electron, eq3_hole]
 
 
@@ -345,51 +420,55 @@ net.apply_feature_transform(feature_transform)
 
 def solve_photodiode_robust(V_bias, iters_stage1, iters_stage2, iters_stage3, initial_weights=None):
     
-    gen_status = "DARK" if optical_gen.is_dark else f"LIGHT"
+    gen_status = "DARK" if optical_gen.is_dark else "LIGHT"
     print("-" * 60)
     print(f"Solving for V_bias = {V_bias:.3f} V, {gen_status}")
 
+    # 1. Get Boundary Conditions
     bcs = get_bcs_robust(V_bias)
+    
+    # 2. SMART SAMPLING (The fix for flat profiles)
+    # We generate 2000 points, heavily focused on the junctions
+    anchors = get_junction_distribution(2000)
     
     data = dde.data.PDE(
         geom,
         pde_system_robust,
         bcs,
-        num_domain=2000,    # Reduced slightly for speed, increase if stable
-        num_boundary=500,
-        num_test=500
+        num_domain=0,      # We set this to 0 because we provide anchors
+        num_boundary=400,
+        anchors=anchors    # Explicitly use our smart distribution
     )
 
     model = dde.Model(data, net)
 
+    # 3. INITIALIZATION / PRE-TRAINING (The fix for 10^18 current)
     if initial_weights:
         model.net.load_state_dict(initial_weights)
+        print(">>> Loaded weights from previous step.")
     else:
-        # --- CRITICAL INITIALIZATION FIX ---
-        # We initialize weights to be very small (gain=0.01).
-        # This ensures initial outputs are ~0.0V, preventing exp(100) explosions.
-        def init_weights(m):
-            if isinstance(m, torch.nn.Linear):
-                torch.nn.init.xavier_normal_(m.weight, gain=0.01)
-                m.bias.data.fill_(0.0)
-        net.apply(init_weights)
+        # If no weights provided, this is the first run (V=0, Dark).
+        # We MUST pre-train on the analytical guess.
+        pretrain_analytical(model, iters=5000)
 
-    # Weights: Poisson usually converges fast, Continuity is hard.
-    # We give Continuity higher relative weight now that it's normalized correctly.
-    loss_weights = [10.0, 50.0, 50.0] + [100.0] * len(bcs)
+    # 4. LOSS WEIGHTS
+    # We give high weight to Continuity and very high weight to BCs
+    # [Poisson, Electron, Hole, BCs...]
+    loss_weights = [1.0, 20.0, 20.0] + [100.0] * len(bcs)
 
-    # STAGE 1: Fast coarse training
+    # STAGE 1: Standard Training
     if iters_stage1 > 0:
-        print("Stage 1: Coarse Training...")
-        model.compile("adam", lr=1e-3, loss_weights=loss_weights)
+        print("Stage 1: Training PDE...")
+        model.compile("adam", lr=1e-4, loss_weights=loss_weights)
         model.train(iterations=iters_stage1, display_every=1000)
 
-    # STAGE 2: Fine tuning
+    # STAGE 2: Refinement (Optional lower LR)
     if iters_stage2 > 0:
         print("Stage 2: Fine Tuning...")
-        model.compile("adam", lr=1e-4, loss_weights=loss_weights) # Lower LR
+        model.compile("adam", lr=2e-5, loss_weights=loss_weights)
         model.train(iterations=iters_stage2, display_every=1000)
 
+    # Return model and weights for the next voltage step
     import copy
     return model, copy.deepcopy(model.net.state_dict())
 
